@@ -10,6 +10,7 @@ A Node.js, React + Vite app for tracking delivery driver metrics.
 ## Setup
 
 1.  **Server Setup**
+
     ```bash
     cd server
     npm install

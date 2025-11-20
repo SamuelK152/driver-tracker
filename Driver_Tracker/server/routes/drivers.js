@@ -14,52 +14,84 @@ const auth = (req, res, next) => {
 // Save metrics
 router.post('/', auth, async (req, res) => {
   let metrics = [];
-  let date = null;
+  let dateStr = null;
 
   // Handle both array (legacy) and object with date
   if (Array.isArray(req.body)) {
     metrics = req.body;
   } else {
     metrics = req.body.metrics || [];
-    date = req.body.date;
+    dateStr = req.body.date;
   }
-  
+
   try {
-    // Filter out invalid rows and format data
+    // Determine the date range for duplicate checking
+    // If dateStr is provided, use it. Otherwise use today.
+    // We assume dateStr is YYYY-MM-DD
+    const targetDate = dateStr ? new Date(dateStr) : new Date();
+    // Normalize to midnight UTC if it was a string, or just use it if it's today (but we want to be consistent)
+    // If dateStr was provided, new Date(dateStr) is already midnight UTC.
+    // If not, we should probably normalize to midnight to match the behavior of the frontend default.
+    if (!dateStr) {
+      targetDate.setUTCHours(0, 0, 0, 0);
+    }
+    
+    const nextDay = new Date(targetDate);
+    nextDay.setDate(targetDate.getDate() + 1);
+
+    // Filter out invalid rows
     const validMetrics = metrics.filter(m => m["Transporter Id"] && m["Driver name"]);
     
-    const formattedMetrics = validMetrics.map(m => ({
-      transporterId: m["Transporter Id"],
-      driverName: m["Driver name"],
-      routeCode: m["Route code"],
-      projectedRTS: m["Projected Return to Station"],
-      deliveryServiceType: m["Delivery Service Type"],
-      vin: m["cortex_vin_number"],
-      allStops: Number(m["All stops"]) || 0,
-      stopsComplete: Number(m["Stops complete"]) || 0,
-      notStartedStops: Number(m["not started stops"]) || 0,
-      totalPackages: Number(m["total packages"]) || 0,
-      avgPace: Number(m["cortex_avg_pace_stops_per_hour"]) || 0,
-      signIn: m["App sign in:"],
-      signOut: m["App sign out:"],
-      lastStopExecution: m["cortex_last_stop_execution_time"],
-      breakTimeUsed: Number(m["cortex_total_break_time_used"]) || 0,
-      createdAt: date ? new Date(date) : new Date()
-    }));
+    // Get list of transporter IDs to check
+    const transporterIds = validMetrics.map(m => m["Transporter Id"]);
+
+    // Find existing records for these drivers on this date
+    const existingRecords = await DriverMetric.find({
+      transporterId: { $in: transporterIds },
+      createdAt: { $gte: targetDate, $lt: nextDay }
+    });
+
+    const existingTransporterIds = new Set(existingRecords.map(r => r.transporterId));
+
+    const formattedMetrics = validMetrics
+      .filter(m => !existingTransporterIds.has(m["Transporter Id"]))
+      .map(m => ({
+        transporterId: m["Transporter Id"],
+        driverName: m["Driver name"],
+        routeCode: m["Route code"],
+        projectedRTS: m["Projected Return to Station"],
+        deliveryServiceType: m["Delivery Service Type"],
+        vin: m["cortex_vin_number"],
+        allStops: Number(m["All stops"]) || 0,
+        stopsComplete: Number(m["Stops complete"]) || 0,
+        notStartedStops: Number(m["not started stops"]) || 0,
+        totalPackages: Number(m["total packages"]) || 0,
+        avgPace: Number(m["cortex_avg_pace_stops_per_hour"]) || 0,
+        signIn: m["App sign in:"],
+        signOut: m["App sign out:"],
+        lastStopExecution: m["cortex_last_stop_execution_time"],
+        breakTimeUsed: Number(m["cortex_total_break_time_used"]) || 0,
+        createdAt: targetDate
+      }));
 
     if (formattedMetrics.length === 0) {
+      if (validMetrics.length > 0) {
+        return res.status(200).json({ message: 'All provided metrics already exist for this date.', count: 0, skipped: validMetrics.length });
+      }
       return res.status(400).json({ message: 'No valid driver data found in file' });
     }
 
     await DriverMetric.insertMany(formattedMetrics);
-    res.status(201).json({ message: 'Metrics saved successfully', count: formattedMetrics.length });
+    res.status(201).json({ 
+      message: 'Metrics saved successfully', 
+      count: formattedMetrics.length, 
+      skipped: validMetrics.length - formattedMetrics.length 
+    });
   } catch (error) {
     console.error("Error saving metrics:", error);
     res.status(500).json({ message: 'Error saving metrics', error: error.message });
   }
-});
-
-// Get all unique drivers
+});// Get all unique drivers
 router.get('/list', auth, async (req, res) => {
   try {
     const drivers = await DriverMetric.aggregate([
