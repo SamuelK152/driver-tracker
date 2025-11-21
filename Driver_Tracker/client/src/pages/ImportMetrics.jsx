@@ -22,9 +22,68 @@ const DISPLAY_FIELDS = [
 
 const ImportMetrics = () => {
   const [data, setData] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [errors, setErrors] = useState([]);
+  // Initialize with local date instead of UTC to avoid "tomorrow" appearing late at night
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  });
+
+  const validateData = (processedData) => {
+    const newErrors = [];
+    // Regex for "H:MM" or "H:MM AM/PM" or "H:MM:SS"
+    const timeRegex = /^\d{1,2}:\d{2}(?::\d{2})?\s*(AM|PM)?$/i;
+
+    processedData.forEach((row, index) => {
+      const fields = ["App sign out:", "cortex_last_stop_execution_time"];
+      fields.forEach((field) => {
+        const val = row[field];
+        // Only validate if it's a string and not empty/placeholder
+        if (val && typeof val === "string" && val !== "-") {
+          // Check if it fails the time regex
+          if (!timeRegex.test(val.trim())) {
+            newErrors.push({
+              rowIndex: index,
+              field,
+              driverName: row["Driver name"],
+            });
+          }
+        }
+      });
+    });
+
+    // Route code validation
+    processedData.forEach((row, index) => {
+      const routeCode = row["Route code"];
+      if (
+        routeCode &&
+        typeof routeCode === "string" &&
+        routeCode.includes("|")
+      ) {
+        newErrors.push({
+          rowIndex: index,
+          field: "Route code",
+          driverName: row["Driver name"],
+        });
+      }
+    });
+
+    setErrors(newErrors);
+    return newErrors.length === 0;
+  };
+
+  const handleCorrection = (rowIndex, field, newValue) => {
+    const newData = [...data];
+    newData[rowIndex][field] = newValue;
+    setData(newData);
+  };
+
+  const revalidate = () => {
+    validateData(data);
+  };
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -35,7 +94,45 @@ const ImportMetrics = () => {
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
       const jsonData = XLSX.utils.sheet_to_json(ws);
-      setData(jsonData);
+
+      // Identify claimed routes (single routes assigned to drivers)
+      const claimedRoutes = new Set();
+      jsonData.forEach((row) => {
+        const routeCode = row["Route code"];
+        if (
+          routeCode &&
+          typeof routeCode === "string" &&
+          !routeCode.includes("|")
+        ) {
+          claimedRoutes.add(routeCode.trim());
+        }
+      });
+
+      // Process drivers with multiple routes
+      const processedData = jsonData.map((row) => {
+        const routeCode = row["Route code"];
+        if (
+          routeCode &&
+          typeof routeCode === "string" &&
+          routeCode.includes("|")
+        ) {
+          const codes = routeCode.split("|").map((c) => c.trim());
+          // Filter out codes that are claimed by other drivers
+          const remainingCodes = codes.filter(
+            (code) => !claimedRoutes.has(code)
+          );
+
+          if (remainingCodes.length === 0) {
+            return { ...row, "Route code": "RESCUE" };
+          } else {
+            return { ...row, "Route code": remainingCodes.join("|") };
+          }
+        }
+        return row;
+      });
+
+      setData(processedData);
+      validateData(processedData);
     };
     reader.readAsBinaryString(file);
   };
@@ -96,7 +193,7 @@ const ImportMetrics = () => {
             className="border p-2 rounded"
           />
         </div>
-        {data.length > 0 && (
+        {data.length > 0 && errors.length === 0 && (
           <button
             onClick={handleSave}
             className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 h-[42px]"
@@ -105,6 +202,56 @@ const ImportMetrics = () => {
           </button>
         )}
       </div>
+
+      {errors.length > 0 && (
+        <div className="bg-red-50 p-4 mb-4 border border-red-200 rounded shadow">
+          <h3 className="text-lg font-bold text-red-700 mb-2">
+            Invalid Data Detected
+          </h3>
+          <p className="text-sm text-red-600 mb-4">
+            Some records have invalid formats (e.g. dates in time fields or
+            multiple route codes). Please correct them.
+          </p>
+          <div className="space-y-3 max-h-96 overflow-y-auto mb-4">
+            {errors.map((error, i) => (
+              <div
+                key={i}
+                className="flex flex-col sm:flex-row sm:items-center gap-2 bg-white p-2 rounded border border-red-100"
+              >
+                <span className="font-semibold min-w-[150px]">
+                  {error.driverName}
+                </span>
+                <span className="text-gray-500 text-sm min-w-[200px]">
+                  {error.field}
+                </span>
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={data[error.rowIndex][error.field]}
+                    onChange={(e) =>
+                      handleCorrection(
+                        error.rowIndex,
+                        error.field,
+                        e.target.value
+                      )
+                    }
+                    className="border border-gray-300 rounded px-2 py-1 w-full focus:border-blue-500 focus:outline-none"
+                    placeholder={
+                      error.field === "Route code" ? "e.g. CX53" : "e.g. 7:41pm"
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={revalidate}
+            className="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 font-medium"
+          >
+            Validate & Fix
+          </button>
+        </div>
+      )}
 
       {data.length > 0 && (
         <div className="overflow-x-auto bg-white shadow rounded">

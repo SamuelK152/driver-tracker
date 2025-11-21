@@ -28,27 +28,27 @@ router.post('/', auth, async (req, res) => {
     // Determine the date range for duplicate checking
     // If dateStr is provided, use it. Otherwise use today.
     // We assume dateStr is YYYY-MM-DD
-    const targetDate = dateStr ? new Date(dateStr) : new Date();
-    // Normalize to midnight UTC if it was a string, or just use it if it's today (but we want to be consistent)
-    // If dateStr was provided, new Date(dateStr) is already midnight UTC.
-    // If not, we should probably normalize to midnight to match the behavior of the frontend default.
-    if (!dateStr) {
-      targetDate.setUTCHours(0, 0, 0, 0);
-    }
-    
-    const nextDay = new Date(targetDate);
-    nextDay.setDate(targetDate.getDate() + 1);
+    const queryStartDate = dateStr ? new Date(dateStr) : new Date();
+    if (!dateStr) queryStartDate.setUTCHours(0, 0, 0, 0);
+
+    const queryEndDate = new Date(queryStartDate);
+    queryEndDate.setDate(queryStartDate.getDate() + 1);
+
+    // Use 8:00 UTC for saving. This corresponds to Midnight PST (UTC-8).
+    // This ensures the date is recorded as the start of the day in Pacific Time.
+    const saveDate = new Date(queryStartDate);
+    saveDate.setUTCHours(8, 0, 0, 0);
 
     // Filter out invalid rows
     const validMetrics = metrics.filter(m => m["Transporter Id"] && m["Driver name"]);
-    
+
     // Get list of transporter IDs to check
     const transporterIds = validMetrics.map(m => m["Transporter Id"]);
 
     // Find existing records for these drivers on this date
     const existingRecords = await DriverMetric.find({
       transporterId: { $in: transporterIds },
-      createdAt: { $gte: targetDate, $lt: nextDay }
+      createdAt: { $gte: queryStartDate, $lt: queryEndDate }
     });
 
     const existingTransporterIds = new Set(existingRecords.map(r => r.transporterId));
@@ -71,21 +71,19 @@ router.post('/', auth, async (req, res) => {
         signOut: m["App sign out:"],
         lastStopExecution: m["cortex_last_stop_execution_time"],
         breakTimeUsed: Number(m["cortex_total_break_time_used"]) || 0,
-        createdAt: targetDate
-      }));
-
-    if (formattedMetrics.length === 0) {
-      if (validMetrics.length > 0) {
-        return res.status(200).json({ message: 'All provided metrics already exist for this date.', count: 0, skipped: validMetrics.length });
+        createdAt: saveDate
+      })); if (formattedMetrics.length === 0) {
+        if (validMetrics.length > 0) {
+          return res.status(200).json({ message: 'All provided metrics already exist for this date.', count: 0, skipped: validMetrics.length });
+        }
+        return res.status(400).json({ message: 'No valid driver data found in file' });
       }
-      return res.status(400).json({ message: 'No valid driver data found in file' });
-    }
 
     await DriverMetric.insertMany(formattedMetrics);
-    res.status(201).json({ 
-      message: 'Metrics saved successfully', 
-      count: formattedMetrics.length, 
-      skipped: validMetrics.length - formattedMetrics.length 
+    res.status(201).json({
+      message: 'Metrics saved successfully',
+      count: formattedMetrics.length,
+      skipped: validMetrics.length - formattedMetrics.length
     });
   } catch (error) {
     console.error("Error saving metrics:", error);
@@ -113,6 +111,61 @@ router.get('/list', auth, async (req, res) => {
     res.status(200).json(drivers);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching drivers' });
+  }
+});
+
+// Get all unique routes
+router.get('/routes', auth, async (req, res) => {
+  try {
+    const routes = await DriverMetric.distinct('routeCode');
+    res.status(200).json(routes.filter(r => r).sort());
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching routes' });
+  }
+});
+
+// Get all unique dates
+router.get('/dates', auth, async (req, res) => {
+  try {
+    const dates = await DriverMetric.aggregate([
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }
+        }
+      },
+      { $sort: { _id: -1 } }
+    ]);
+    res.status(200).json(dates.map(d => d._id));
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching dates' });
+  }
+});
+
+// Get history for a specific route
+router.get('/route/:routeCode', auth, async (req, res) => {
+  const { routeCode } = req.params;
+  try {
+    const history = await DriverMetric.find({ routeCode }).sort({ createdAt: -1 });
+    res.status(200).json(history);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching route history' });
+  }
+});
+
+// Get history for a specific date
+router.get('/date/:date', auth, async (req, res) => {
+  const { date } = req.params;
+  try {
+    const startDate = new Date(date);
+    const endDate = new Date(date);
+    endDate.setDate(endDate.getDate() + 1);
+
+    const history = await DriverMetric.find({
+      createdAt: { $gte: startDate, $lt: endDate }
+    }).sort({ driverName: 1 });
+    res.status(200).json(history);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching date history' });
   }
 });
 
