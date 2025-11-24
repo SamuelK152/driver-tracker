@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import axios from "axios";
 
-const MetricsGraph = ({ data, viewMode }) => {
+const MetricsGraph = ({ data, viewMode, timeRange, periodStart }) => {
   const [hoverIndex, setHoverIndex] = useState(null);
+  const [hoverMetric, setHoverMetric] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const containerRef = useRef(null);
   const [width, setWidth] = useState(800);
@@ -19,47 +20,87 @@ const MetricsGraph = ({ data, viewMode }) => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  if (!data || data.length === 0) return null;
+  // Generate full date range data
+  const graphData = useMemo(() => {
+    if (!periodStart || !timeRange) return [];
 
-  // Sort data by date ascending
-  const sortedData = [...data].sort(
-    (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
-  );
+    const dates = [];
+    const startDate = new Date(periodStart);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-  // Helper to get minutes
-  const getMinutes = (signOut) => {
-    if (!signOut) return 0;
-    const timeRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/;
-    const match = signOut.match(timeRegex);
-    if (!match) return 0;
-    let hours = parseInt(match[1]);
-    const minutes = parseInt(match[2]);
-    const period = match[4] ? match[4].toUpperCase() : null;
-    if (period === "PM" && hours !== 12) hours += 12;
-    if (period === "AM" && hours === 12) hours = 0;
-    const deadlineMinutes = 20 * 60 + 5;
-    const currentMinutes = hours * 60 + minutes;
-    return currentMinutes - deadlineMinutes;
-  };
-
-  const graphData = sortedData.map((d) => {
-    let label = d.routeCode;
-    if (viewMode === "routes") {
-      label = d.driverNames ? d.driverNames.join("|") : d.driverName;
+    let daysCount = 7;
+    if (timeRange === "month") {
+      const year = startDate.getFullYear();
+      const month = startDate.getMonth();
+      daysCount = new Date(year, month + 1, 0).getDate();
     }
-    return {
-      date: new Date(d.createdAt).toLocaleDateString(undefined, {
-        month: "numeric",
-        day: "numeric",
-      }),
-      label,
-      packages: d.totalPackages || 0,
-      stops: d.stopsComplete || 0,
-      pace: parseFloat(d.avgPace || 0),
-      targetDiff: getMinutes(d.signOut),
-      raw: d,
-    };
-  });
+
+    for (let i = 0; i < daysCount; i++) {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + i);
+      dates.push(d);
+    }
+
+    const dataMap = {};
+    data.forEach((item) => {
+      const d = new Date(item.createdAt);
+      // Normalize to local date string for comparison
+      const dateStr = d.toLocaleDateString();
+      dataMap[dateStr] = item;
+    });
+
+    return dates.map((date) => {
+      const dateStr = date.toLocaleDateString();
+      const d = dataMap[dateStr];
+      const isMissing = !d;
+      const isPast = date < today;
+
+      let label = "";
+      if (!isMissing) {
+        label = d.routeCode;
+        if (viewMode === "routes") {
+          label = d.driverNames ? d.driverNames.join("|") : d.driverName;
+        }
+      }
+
+      // Helper to get minutes (copied from original)
+      const getMinutes = (signOut) => {
+        if (!signOut) return 0;
+        const timeRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/;
+        const match = signOut.match(timeRegex);
+        if (!match) return 0;
+        let hours = parseInt(match[1]);
+        const minutes = parseInt(match[2]);
+        const period = match[4] ? match[4].toUpperCase() : null;
+        if (period === "PM" && hours !== 12) hours += 12;
+        if (period === "AM" && hours === 12) hours = 0;
+        const deadlineMinutes = 20 * 60 + 5;
+        const currentMinutes = hours * 60 + minutes;
+        return currentMinutes - deadlineMinutes;
+      };
+
+      return {
+        date:
+          timeRange === "month"
+            ? date.getDate().toString()
+            : date.toLocaleDateString(undefined, {
+                month: "numeric",
+                day: "numeric",
+              }),
+        label,
+        packages: d ? d.totalPackages || 0 : 0,
+        stops: d ? d.stopsComplete || 0 : 0,
+        pace: d ? parseFloat(d.avgPace || 0) : 0,
+        targetDiff: d ? getMinutes(d.signOut) : 0,
+        raw: d,
+        isMissing,
+        isPast,
+      };
+    });
+  }, [data, timeRange, periodStart, viewMode]);
+
+  if (!graphData.length) return null;
 
   const height = 350;
   const margin = { top: 40, right: 20, bottom: 40, left: 60 };
@@ -69,9 +110,12 @@ const MetricsGraph = ({ data, viewMode }) => {
   // 4 Sections: Bar (Target), Line (Packages), Line (Stops), Line (Pace)
   const sectionH = chartHeight / 4;
 
-  // Scales - Dynamic Range to exaggerate change
+  // Scales - Calculate based on EXISTING data only
+  const validData = graphData.filter((d) => !d.isMissing);
+
   const getRange = (key, minDiff = 10) => {
-    const values = graphData.map((d) => d[key]);
+    if (validData.length === 0) return { min: 0, max: 100 };
+    const values = validData.map((d) => d[key]);
     let min = Math.min(...values);
     let max = Math.max(...values);
 
@@ -89,10 +133,10 @@ const MetricsGraph = ({ data, viewMode }) => {
   const stpRange = getRange("stops", 5);
   const paceRange = getRange("pace", 2);
 
-  const maxTargetDiff = Math.max(
-    ...graphData.map((d) => Math.abs(d.targetDiff)),
-    10
-  );
+  const maxTargetDiff =
+    validData.length > 0
+      ? Math.max(...validData.map((d) => Math.abs(d.targetDiff)), 10)
+      : 10;
 
   const slotWidth = chartWidth / (graphData.length || 1);
   const maxBarWidth = 50;
@@ -106,15 +150,17 @@ const MetricsGraph = ({ data, viewMode }) => {
   const yStp = margin.top + sectionH * 2;
   const yPace = margin.top + sectionH * 3;
 
-  // Points for lines
+  // Points for lines - Skip missing
   const getPoints = (metric, range, yOffset) => {
     return graphData
       .map((d, i) => {
+        if (d.isMissing) return null;
         const x = getX(i);
         const ratio = (d[metric] - range.min) / (range.max - range.min);
         const y = yOffset + sectionH - 10 - ratio * (sectionH - 20);
         return `${x},${y}`;
       })
+      .filter((p) => p !== null)
       .join(" ");
   };
 
@@ -130,15 +176,26 @@ const MetricsGraph = ({ data, viewMode }) => {
         onMouseMove={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
           const idx = Math.floor((x - margin.left) / slotWidth);
           if (idx >= 0 && idx < graphData.length) {
             setHoverIndex(idx);
-            setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            setMousePos({ x, y });
+
+            if (y >= yBar && y < yPkg) setHoverMetric("target");
+            else if (y >= yPkg && y < yStp) setHoverMetric("packages");
+            else if (y >= yStp && y < yPace) setHoverMetric("stops");
+            else if (y >= yPace && y < yPace + sectionH) setHoverMetric("pace");
+            else setHoverMetric(null);
           } else {
             setHoverIndex(null);
+            setHoverMetric(null);
           }
         }}
-        onMouseLeave={() => setHoverIndex(null)}
+        onMouseLeave={() => {
+          setHoverIndex(null);
+          setHoverMetric(null);
+        }}
       >
         {/* Grid Lines & Labels */}
         {[yBar, yPkg, yStp, yPace].map((y, i) => (
@@ -187,6 +244,47 @@ const MetricsGraph = ({ data, viewMode }) => {
           const x = getX(i);
           const isHovered = hoverIndex === i;
 
+          if (d.isMissing) {
+            if (d.isPast) {
+              // Grey bar for past missing data
+              return (
+                <g key={i}>
+                  <rect
+                    x={getX(i) - slotWidth / 2}
+                    y={margin.top}
+                    width={slotWidth}
+                    height={chartHeight}
+                    fill="#f3f4f6" // Light grey
+                    opacity={0.5}
+                  />
+                  {/* Date Label */}
+                  <text
+                    x={x}
+                    y={height - 10}
+                    textAnchor="middle"
+                    className="text-xs font-medium fill-gray-400"
+                  >
+                    {d.date}
+                  </text>
+                </g>
+              );
+            } else {
+              // Future missing data - just date label
+              return (
+                <g key={i}>
+                  <text
+                    x={x}
+                    y={height - 10}
+                    textAnchor="middle"
+                    className="text-xs font-medium fill-gray-300"
+                  >
+                    {d.date}
+                  </text>
+                </g>
+              );
+            }
+          }
+
           const barHeight =
             (Math.abs(d.targetDiff) / maxTargetDiff) * (sectionH - 10);
 
@@ -202,14 +300,16 @@ const MetricsGraph = ({ data, viewMode }) => {
               />
 
               {/* Top Label (Route/Driver) */}
-              <text
-                x={x}
-                y={margin.top - 10}
-                textAnchor="middle"
-                className="text-xs font-medium fill-gray-600"
-              >
-                {d.label}
-              </text>
+              {timeRange !== "month" && (
+                <text
+                  x={x}
+                  y={margin.top - 10}
+                  textAnchor="middle"
+                  className="text-xs font-medium fill-gray-600"
+                >
+                  {d.label}
+                </text>
+              )}
 
               {/* Bottom Label (Date) */}
               <text
@@ -265,6 +365,7 @@ const MetricsGraph = ({ data, viewMode }) => {
 
         {/* Dots for Lines */}
         {graphData.map((d, i) => {
+          if (d.isMissing) return null;
           const x = getX(i);
           const getDotY = (val, range, yOffset) => {
             const ratio = (val - range.min) / (range.max - range.min);
@@ -283,34 +384,44 @@ const MetricsGraph = ({ data, viewMode }) => {
         })}
 
         {/* Tooltip */}
-        {hoverIndex !== null && (
-          <g transform={`translate(${mousePos.x + 10}, ${mousePos.y + 10})`}>
-            <rect
-              width="140"
-              height="110"
-              fill="white"
-              stroke="#ccc"
-              rx="4"
-              filter="drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))"
-            />
-            <text x="10" y="20" className="text-xs font-bold">
-              {graphData[hoverIndex].date} - {graphData[hoverIndex].label}
-            </text>
-            <text x="10" y="40" className="text-xs fill-red-600">
-              Target: {graphData[hoverIndex].targetDiff > 0 ? "+" : ""}
-              {graphData[hoverIndex].targetDiff}m
-            </text>
-            <text x="10" y="60" className="text-xs fill-green-600">
-              Packages: {graphData[hoverIndex].packages}
-            </text>
-            <text x="10" y="80" className="text-xs fill-blue-600">
-              Stops: {graphData[hoverIndex].stops}
-            </text>
-            <text x="10" y="100" className="text-xs fill-purple-600">
-              Pace: {graphData[hoverIndex].pace}
-            </text>
-          </g>
-        )}
+        {hoverIndex !== null &&
+          hoverMetric &&
+          !graphData[hoverIndex].isMissing && (
+            <g transform={`translate(${mousePos.x + 10}, ${mousePos.y + 10})`}>
+              <rect
+                width="140"
+                height="50"
+                fill="white"
+                stroke="#ccc"
+                rx="4"
+                filter="drop-shadow(0 2px 4px rgb(0 0 0 / 0.1))"
+              />
+              <text x="10" y="20" className="text-xs font-bold">
+                {graphData[hoverIndex].date} - {graphData[hoverIndex].label}
+              </text>
+              {hoverMetric === "target" && (
+                <text x="10" y="40" className="text-xs fill-red-600">
+                  Target: {graphData[hoverIndex].targetDiff > 0 ? "+" : ""}
+                  {graphData[hoverIndex].targetDiff}m
+                </text>
+              )}
+              {hoverMetric === "packages" && (
+                <text x="10" y="40" className="text-xs fill-green-600">
+                  Packages: {graphData[hoverIndex].packages}
+                </text>
+              )}
+              {hoverMetric === "stops" && (
+                <text x="10" y="40" className="text-xs fill-blue-600">
+                  Stops: {graphData[hoverIndex].stops}
+                </text>
+              )}
+              {hoverMetric === "pace" && (
+                <text x="10" y="40" className="text-xs fill-purple-600">
+                  Pace: {graphData[hoverIndex].pace}
+                </text>
+              )}
+            </g>
+          )}
       </svg>
     </div>
   );
@@ -323,6 +434,17 @@ const History = () => {
   const [history, setHistory] = useState([]);
   const [timeRange, setTimeRange] = useState("week");
   const [currentPeriodStart, setCurrentPeriodStart] = useState(null);
+
+  // Date Navigation State
+  const [dateNav, setDateNav] = useState({
+    level: "year", // 'year', 'month', 'week', 'day'
+    year: null,
+    month: null,
+    weekStart: null,
+    day: null,
+  });
+  const [availableDates, setAvailableDates] = useState([]);
+  const [summaryData, setSummaryData] = useState([]);
 
   const getStartOfWeek = (date) => {
     const d = new Date(date);
@@ -350,10 +472,18 @@ const History = () => {
   }, [timeRange]);
 
   useEffect(() => {
-    setListData([]); // Clear list data to avoid type mismatches during view switch
-    fetchListData();
+    setListData([]); // Clear list data
     setSelectedItem(null);
     setHistory([]);
+    setSummaryData([]);
+    setDateNav({
+      level: "year",
+      year: null,
+      month: null,
+      weekStart: null,
+      day: null,
+    });
+    fetchListData();
   }, [viewMode]);
 
   const fetchListData = async () => {
@@ -372,13 +502,81 @@ const History = () => {
       if (viewMode === "drivers") {
         data = data.sort((a, b) => a.driverName.localeCompare(b.driverName));
       }
-      setListData(data);
+      
+      if (viewMode === "dates") {
+        setAvailableDates(data); // Store raw date strings
+      } else {
+        setListData(data);
+      }
     } catch (error) {
       console.error(error);
     }
   };
 
+  // Helper to fetch summary data
+  const fetchSummary = async (start, end) => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.get("http://localhost:5000/api/drivers/summary", {
+        params: { start: start.toISOString(), end: end.toISOString() },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setSummaryData(res.data);
+    } catch (error) {
+      console.error("Error fetching summary:", error);
+    }
+  };
+
   const handleItemClick = async (item) => {
+    if (viewMode === "dates") {
+      // Handle Date Navigation
+      // item is the clicked value (year number, month index, week string, or day string)
+      
+      const newNav = { ...dateNav };
+      let start, end;
+
+      if (dateNav.level === "year") {
+        newNav.level = "month";
+        newNav.year = item;
+        // Fetch summary for the year
+        start = new Date(item, 0, 1);
+        end = new Date(item, 11, 31);
+        fetchSummary(start, end);
+      } else if (dateNav.level === "month") {
+        newNav.level = "week";
+        newNav.month = item; // 0-11
+        // Fetch summary for the month
+        start = new Date(newNav.year, item, 1);
+        end = new Date(newNav.year, item + 1, 0);
+        fetchSummary(start, end);
+      } else if (dateNav.level === "week") {
+        newNav.level = "day";
+        newNav.weekStart = item; // Date object or string
+        // Fetch summary for the week
+        start = new Date(item);
+        end = new Date(item);
+        end.setDate(end.getDate() + 6);
+        fetchSummary(start, end);
+      } else if (dateNav.level === "day") {
+        // Fetch details for the day
+        // item is the date string YYYY-MM-DD
+        setSelectedItem(item); // For title
+        try {
+          const token = localStorage.getItem("token");
+          const res = await axios.get(
+            `http://localhost:5000/api/drivers/date/${encodeURIComponent(item)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          setHistory(res.data);
+        } catch (error) {
+          console.error(error);
+        }
+      }
+      
+      setDateNav(newNav);
+      return;
+    }
+
     setSelectedItem(item);
     try {
       const token = localStorage.getItem("token");
@@ -389,10 +587,6 @@ const History = () => {
         )}`;
       if (viewMode === "routes")
         url = `http://localhost:5000/api/drivers/route/${encodeURIComponent(
-          item
-        )}`;
-      if (viewMode === "dates")
-        url = `http://localhost:5000/api/drivers/date/${encodeURIComponent(
           item
         )}`;
 
@@ -408,11 +602,6 @@ const History = () => {
             acc[date] = { ...curr, driverNames: [curr.driverName] };
           } else {
             acc[date].driverNames.push(curr.driverName);
-            // Aggregate other metrics if needed, or just take the first one found
-            // Assuming route metrics are similar for the route, but stops/packages might differ per driver?
-            // The request says "daily metrics for that specific route".
-            // Usually a route is assigned to one driver per day, but if split, we might need to sum?
-            // For now, let's just list drivers.
           }
           return acc;
         }, {});
@@ -463,7 +652,192 @@ const History = () => {
     }
   };
 
+  const handleBack = () => {
+    const newNav = { ...dateNav };
+    if (dateNav.level === "month") {
+      newNav.level = "year";
+      newNav.year = null;
+      setSummaryData([]);
+    } else if (dateNav.level === "week") {
+      newNav.level = "month";
+      newNav.month = null;
+      // Re-fetch year summary
+      const start = new Date(newNav.year, 0, 1);
+      const end = new Date(newNav.year, 11, 31);
+      fetchSummary(start, end);
+    } else if (dateNav.level === "day") {
+      newNav.level = "week";
+      newNav.weekStart = null;
+      // Re-fetch month summary
+      const start = new Date(newNav.year, newNav.month, 1);
+      const end = new Date(newNav.year, newNav.month + 1, 0);
+      fetchSummary(start, end);
+    }
+    setDateNav(newNav);
+    setHistory([]);
+    setSelectedItem(null);
+  };
+
+  // Helper to parse YYYY-MM-DD to local Date object
+  const parseLocalDate = (dateStr) => {
+    if (!dateStr) return new Date();
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  };
+
   const renderList = () => {
+    if (viewMode === "dates") {
+      // Date Navigation Logic
+      let items = [];
+      let onClick = () => {};
+      let backButton = null;
+
+      if (dateNav.level === "year") {
+        // Extract unique years
+        const years = [
+          ...new Set(
+            availableDates.map((d) => parseLocalDate(d).getFullYear())
+          ),
+        ].sort((a, b) => b - a);
+        items = years.map((y) => ({ label: y, value: y }));
+        onClick = (item) => handleItemClick(item.value);
+      } else if (dateNav.level === "month") {
+        backButton = (
+          <button
+            onClick={handleBack}
+            className="mb-2 text-sm text-blue-600 hover:underline"
+          >
+            &larr; Back to Years
+          </button>
+        );
+        // Extract months for selected year
+        const months = [
+          ...new Set(
+            availableDates
+              .filter((d) => parseLocalDate(d).getFullYear() === dateNav.year)
+              .map((d) => parseLocalDate(d).getMonth())
+          ),
+        ].sort((a, b) => b - a);
+
+        const monthNames = [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ];
+        items = months.map((m) => ({ label: monthNames[m], value: m }));
+        onClick = (item) => handleItemClick(item.value);
+      } else if (dateNav.level === "week") {
+        backButton = (
+          <button
+            onClick={handleBack}
+            className="mb-2 text-sm text-blue-600 hover:underline"
+          >
+            &larr; Back to Months
+          </button>
+        );
+        // Extract weeks for selected month
+        // We'll group by week start (Sunday)
+        const datesInMonth = availableDates
+          .filter((d) => {
+            const date = parseLocalDate(d);
+            return (
+              date.getFullYear() === dateNav.year &&
+              date.getMonth() === dateNav.month
+            );
+          })
+          .sort();
+
+        const weeks = new Set();
+        datesInMonth.forEach((d) => {
+          const date = parseLocalDate(d);
+          const start = getStartOfWeek(date);
+          weeks.add(start.toISOString());
+        });
+
+        items = [...weeks].sort().reverse().map((w) => {
+          const start = new Date(w);
+          const end = new Date(start);
+          end.setDate(end.getDate() + 6);
+          return {
+            label: `${start.toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+            })} - ${end.toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+            })}`,
+            value: w,
+          };
+        });
+        onClick = (item) => handleItemClick(item.value);
+      } else if (dateNav.level === "day") {
+        backButton = (
+          <button
+            onClick={handleBack}
+            className="mb-2 text-sm text-blue-600 hover:underline"
+          >
+            &larr; Back to Weeks
+          </button>
+        );
+        // Extract days for selected week
+        const weekStart = new Date(dateNav.weekStart);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        weekEnd.setHours(23, 59, 59, 999);
+
+        const days = availableDates
+          .filter((d) => {
+            const date = parseLocalDate(d);
+            return date >= weekStart && date <= weekEnd;
+          })
+          .sort()
+          .reverse();
+
+        items = days.map((d) => {
+          const date = parseLocalDate(d);
+          return {
+            label: date.toLocaleDateString(undefined, {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+            }),
+            value: d,
+          };
+        });
+        onClick = (item) => handleItemClick(item.value);
+      }
+
+      return (
+        <div>
+          {backButton}
+          <ul>
+            {items.map((item, index) => (
+              <li
+                key={index}
+                onClick={() => onClick(item)}
+                className={`p-2 cursor-pointer hover:bg-gray-100 ${
+                  dateNav.level === "day" && selectedItem === item.value
+                    ? "bg-blue-50"
+                    : ""
+                }`}
+              >
+                <div className="font-semibold">{item.label}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+
     return (
       <ul>
         {listData.map((item, index) => {
@@ -512,10 +886,10 @@ const History = () => {
           <th className="px-4 py-2">Stops</th>
           <th className="px-4 py-2">Packages</th>
           <th className="px-4 py-2">Pace</th>
+          <th className="px-4 py-2">Break Time</th>
+          <th className="px-4 py-2">Last Stop</th>
           <th className="px-4 py-2">Sign Out</th>
           <th className="px-4 py-2">Target</th>
-          <th className="px-4 py-2">Last Stop</th>
-          <th className="px-4 py-2">Break Time</th>
         </tr>
       );
     } else if (viewMode === "routes") {
@@ -526,13 +900,26 @@ const History = () => {
           <th className="px-4 py-2">Stops</th>
           <th className="px-4 py-2">Packages</th>
           <th className="px-4 py-2">Pace</th>
+          <th className="px-4 py-2">Break Time</th>
+          <th className="px-4 py-2">Last Stop</th>
           <th className="px-4 py-2">Sign Out</th>
           <th className="px-4 py-2">Target</th>
-          <th className="px-4 py-2">Last Stop</th>
-          <th className="px-4 py-2">Break Time</th>
         </tr>
       );
     } else if (viewMode === "dates") {
+      if (dateNav.level !== "day" || !selectedItem) {
+        // Summary View Headers
+        return (
+          <tr>
+            <th className="px-4 py-2">Driver</th>
+            <th className="px-4 py-2">Total Stops</th>
+            <th className="px-4 py-2">Total Packages</th>
+            <th className="px-4 py-2">Avg Pace</th>
+            <th className="px-4 py-2">Target (Net)</th>
+          </tr>
+        );
+      }
+      // Detail View Headers
       return (
         <tr>
           <th className="px-4 py-2">Driver</th>
@@ -540,10 +927,10 @@ const History = () => {
           <th className="px-4 py-2">Stops</th>
           <th className="px-4 py-2">Packages</th>
           <th className="px-4 py-2">Pace</th>
+          <th className="px-4 py-2">Break Time</th>
+          <th className="px-4 py-2">Last Stop</th>
           <th className="px-4 py-2">Sign Out</th>
           <th className="px-4 py-2">Target</th>
-          <th className="px-4 py-2">Last Stop</th>
-          <th className="px-4 py-2">Break Time</th>
         </tr>
       );
     }
@@ -574,12 +961,45 @@ const History = () => {
   };
 
   const renderTableRows = () => {
+    if (viewMode === "dates" && (dateNav.level !== "day" || !selectedItem)) {
+      // Render Summary Rows
+      if (summaryData.length === 0) {
+        return (
+          <tr>
+            <td colSpan="5" className="px-4 py-2 text-center text-gray-500">
+              No data available for this period.
+            </td>
+          </tr>
+        );
+      }
+
+      return summaryData.map((driver, index) => {
+        const netMinutes = driver.targetDiff || 0;
+        const h = Math.floor(Math.abs(netMinutes) / 60);
+        const m = Math.abs(netMinutes) % 60;
+        const timeStr = `${h}h ${m}m`;
+        const isOver = netMinutes > 0;
+        
+        return (
+          <tr key={index} className="border-b">
+            <td className="px-4 py-2 font-medium">{driver.driverName}</td>
+            <td className="px-4 py-2">{driver.totalStops}</td>
+            <td className="px-4 py-2">{driver.totalPackages}</td>
+            <td className="px-4 py-2">{driver.avgPace.toFixed(2)}</td>
+            <td className={`px-4 py-2 font-medium ${isOver ? 'text-red-600' : 'text-blue-600'}`}>
+              {isOver ? '+' : '-'}{timeStr}
+            </td>
+          </tr>
+        );
+      });
+    }
+
     const filteredHistory = getFilteredHistory();
 
     if (filteredHistory.length === 0) {
       return (
         <tr>
-          <td colSpan="5" className="px-4 py-2 text-center text-gray-500">
+          <td colSpan="9" className="px-4 py-2 text-center text-gray-500">
             No records found for this period.
           </td>
         </tr>
@@ -599,12 +1019,10 @@ const History = () => {
             </td>
             <td className="px-4 py-2">{record.totalPackages}</td>
             <td className="px-4 py-2">{record.avgPace}</td>
-            <td className="px-4 py-2">{record.signOut}</td>
-            <td className="px-4 py-2">
-              {calculateTarget(record.signOut)}
-            </td>
-            <td className="px-4 py-2">{record.lastStopExecution}</td>
             <td className="px-4 py-2">{record.breakTimeUsed}</td>
+            <td className="px-4 py-2">{record.lastStopExecution}</td>
+            <td className="px-4 py-2">{record.signOut}</td>
+            <td className="px-4 py-2">{calculateTarget(record.signOut)}</td>
           </tr>
         );
       } else if (viewMode === "routes") {
@@ -620,12 +1038,10 @@ const History = () => {
             </td>
             <td className="px-4 py-2">{record.totalPackages}</td>
             <td className="px-4 py-2">{record.avgPace}</td>
-            <td className="px-4 py-2">{record.signOut}</td>
-            <td className="px-4 py-2">
-              {calculateTarget(record.signOut)}
-            </td>
-            <td className="px-4 py-2">{record.lastStopExecution}</td>
             <td className="px-4 py-2">{record.breakTimeUsed}</td>
+            <td className="px-4 py-2">{record.lastStopExecution}</td>
+            <td className="px-4 py-2">{record.signOut}</td>
+            <td className="px-4 py-2">{calculateTarget(record.signOut)}</td>
           </tr>
         );
       } else if (viewMode === "dates") {
@@ -638,12 +1054,10 @@ const History = () => {
             </td>
             <td className="px-4 py-2">{record.totalPackages}</td>
             <td className="px-4 py-2">{record.avgPace}</td>
-            <td className="px-4 py-2">{record.signOut}</td>
-            <td className="px-4 py-2">
-              {calculateTarget(record.signOut)}
-            </td>
-            <td className="px-4 py-2">{record.lastStopExecution}</td>
             <td className="px-4 py-2">{record.breakTimeUsed}</td>
+            <td className="px-4 py-2">{record.lastStopExecution}</td>
+            <td className="px-4 py-2">{record.signOut}</td>
+            <td className="px-4 py-2">{calculateTarget(record.signOut)}</td>
           </tr>
         );
       }
@@ -651,6 +1065,23 @@ const History = () => {
   };
 
   const getTitle = () => {
+    if (viewMode === "dates") {
+      if (dateNav.level === "year") return "Select a Year";
+      if (dateNav.level === "month") return `Summary for ${dateNav.year}`;
+      if (dateNav.level === "week") {
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        return `Summary for ${monthNames[dateNav.month]} ${dateNav.year}`;
+      }
+      if (dateNav.level === "day") {
+        const start = new Date(dateNav.weekStart);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        return `Summary for Week of ${start.toLocaleDateString()}`;
+      }
+      // Detail view (when a day is selected, but logic handles it in handleItemClick setting selectedItem)
+      if (selectedItem) return `Metrics for ${selectedItem}`;
+    }
+
     if (!selectedItem) return "Select an item to view history";
     if (viewMode === "drivers") return `History for ${selectedItem.driverName}`;
     if (viewMode === "routes") return `History for ${selectedItem}`;
@@ -736,41 +1167,55 @@ const History = () => {
   };
 
   const renderSummary = () => {
-    if (!selectedItem) return null;
+    let dataToSummarize = [];
+    let isAggregated = false;
 
-    const filteredHistory = getFilteredHistory();
+    if (viewMode === "dates" && (dateNav.level !== "day" || !selectedItem)) {
+      dataToSummarize = summaryData;
+      isAggregated = true;
+    } else {
+      if (!selectedItem) return null;
+      dataToSummarize = getFilteredHistory();
+    }
 
-    if (filteredHistory.length === 0) return null;
+    if (dataToSummarize.length === 0) return null;
 
-    const totalStops = filteredHistory.reduce(
-      (sum, r) => sum + (r.stopsComplete || 0),
-      0
-    );
-    const totalPackages = filteredHistory.reduce(
-      (sum, r) => sum + (r.totalPackages || 0),
-      0
-    );
-    const avgPace =
-      filteredHistory.length > 0
-        ? (
-            filteredHistory.reduce((sum, r) => sum + (r.avgPace || 0), 0) /
-            filteredHistory.length
-          ).toFixed(2)
-        : 0;
-
+    let totalStops = 0;
+    let totalPackages = 0;
+    let avgPace = 0;
+    let netMinutes = 0;
     let totalOvertimeMinutes = 0;
     let totalUndertimeMinutes = 0;
-    let netMinutes = 0;
 
-    filteredHistory.forEach((r) => {
-      const minutes = getTargetMinutes(r.signOut);
-      netMinutes += minutes;
-      if (minutes > 0) {
-        totalOvertimeMinutes += minutes;
-      } else {
-        totalUndertimeMinutes += Math.abs(minutes);
-      }
-    });
+    if (isAggregated) {
+      totalStops = dataToSummarize.reduce((sum, r) => sum + (r.totalStops || 0), 0);
+      totalPackages = dataToSummarize.reduce((sum, r) => sum + (r.totalPackages || 0), 0);
+      // Weighted average for pace? Or simple average of averages? Simple average for now.
+      avgPace = (dataToSummarize.reduce((sum, r) => sum + (r.avgPace || 0), 0) / dataToSummarize.length).toFixed(2);
+      
+      dataToSummarize.forEach(r => {
+        const minutes = r.targetDiff || 0;
+        netMinutes += minutes;
+        if (minutes > 0) totalOvertimeMinutes += minutes;
+        else totalUndertimeMinutes += Math.abs(minutes);
+      });
+    } else {
+      totalStops = dataToSummarize.reduce((sum, r) => sum + (r.stopsComplete || 0), 0);
+      totalPackages = dataToSummarize.reduce((sum, r) => sum + (r.totalPackages || 0), 0);
+      avgPace = dataToSummarize.length > 0
+        ? (dataToSummarize.reduce((sum, r) => sum + (r.avgPace || 0), 0) / dataToSummarize.length).toFixed(2)
+        : 0;
+
+      dataToSummarize.forEach((r) => {
+        const minutes = getTargetMinutes(r.signOut);
+        netMinutes += minutes;
+        if (minutes > 0) {
+          totalOvertimeMinutes += minutes;
+        } else {
+          totalUndertimeMinutes += Math.abs(minutes);
+        }
+      });
+    }
 
     const formatTime = (totalMinutes) => {
       const h = Math.floor(totalMinutes / 60);
@@ -786,7 +1231,9 @@ const History = () => {
     const netLabel = netMinutes >= 0 ? "Over" : "Under";
     const netColor = netMinutes >= 0 ? "text-red-700" : "text-blue-700";
     const netBg =
-      netMinutes >= 0 ? "bg-red-50 border-red-100" : "bg-blue-50 border-blue-100";
+      netMinutes >= 0
+        ? "bg-red-50 border-red-100"
+        : "bg-blue-50 border-blue-100";
 
     return (
       <div className="grid grid-cols-3 gap-4 mb-4">
@@ -820,7 +1267,9 @@ const History = () => {
           <div className="text-xs text-gray-500 uppercase font-bold">
             Time Spared
           </div>
-          <div className="text-xl font-bold text-blue-700">{totalUndertime}</div>
+          <div className="text-xl font-bold text-blue-700">
+            {totalUndertime}
+          </div>
         </div>
         <div className={`p-3 rounded border ${netBg}`}>
           <div className="text-xs text-gray-500 uppercase font-bold">
@@ -836,7 +1285,7 @@ const History = () => {
 
   return (
     <div className="p-4 flex gap-4">
-      <div className="w-1/3 bg-white p-4 rounded shadow">
+      <div className="w-1/4 bg-white p-4 rounded shadow">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">
             {viewMode === "drivers"
@@ -860,7 +1309,7 @@ const History = () => {
         </div>
       </div>
 
-      <div className="w-2/3 bg-white p-4 rounded shadow">
+      <div className="w-3/4 bg-white p-4 rounded shadow">
         <h2 className="text-xl font-bold mb-4">{getTitle()}</h2>
 
         {selectedItem && viewMode !== "dates" && (
@@ -920,10 +1369,15 @@ const History = () => {
         {selectedItem &&
           (viewMode === "drivers" || viewMode === "routes") &&
           (timeRange === "week" || timeRange === "month") && (
-            <MetricsGraph data={getFilteredHistory()} viewMode={viewMode} />
+            <MetricsGraph
+              data={getFilteredHistory()}
+              viewMode={viewMode}
+              timeRange={timeRange}
+              periodStart={currentPeriodStart}
+            />
           )}
 
-        {selectedItem && (
+        {(selectedItem || (viewMode === "dates" && dateNav.level !== "year")) && (
           <div className="overflow-x-auto">
             <table className="min-w-full table-auto">
               <thead className="bg-gray-200">{renderTableHeaders()}</thead>

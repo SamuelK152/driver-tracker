@@ -169,6 +169,80 @@ router.get('/date/:date', auth, async (req, res) => {
   }
 });
 
+// Get aggregated summary for a date range
+router.get('/summary', auth, async (req, res) => {
+  const { start, end } = req.query;
+  try {
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    // Adjust endDate to include the full day
+    const adjustedEndDate = new Date(endDate);
+    adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
+
+    const summary = await DriverMetric.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate, $lt: adjustedEndDate }
+        }
+      },
+      {
+        $group: {
+          _id: { transporterId: "$transporterId", driverName: "$driverName" },
+          totalStops: { $sum: "$stopsComplete" },
+          totalPackages: { $sum: "$totalPackages" },
+          avgPace: { $avg: "$avgPace" },
+          records: { $push: { signOut: "$signOut" } }
+        }
+      },
+      {
+        $project: {
+          transporterId: "$_id.transporterId",
+          driverName: "$_id.driverName",
+          totalStops: 1,
+          totalPackages: 1,
+          avgPace: 1,
+          records: 1,
+          _id: 0
+        }
+      },
+      { $sort: { driverName: 1 } }
+    ]);
+
+    // Calculate target diffs in JS
+    const processedSummary = summary.map(driver => {
+      let netMinutes = 0;
+      driver.records.forEach(r => {
+        if (!r.signOut) return;
+        const timeRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/;
+        const match = r.signOut.match(timeRegex);
+        if (!match) return;
+        
+        let hours = parseInt(match[1]);
+        const minutes = parseInt(match[2]);
+        const period = match[4] ? match[4].toUpperCase() : null;
+        
+        if (period === "PM" && hours !== 12) hours += 12;
+        if (period === "AM" && hours === 12) hours = 0;
+        
+        const deadlineMinutes = 20 * 60 + 5; // 20:05
+        const currentMinutes = hours * 60 + minutes;
+        netMinutes += (currentMinutes - deadlineMinutes);
+      });
+      
+      return {
+        ...driver,
+        targetDiff: netMinutes,
+        records: undefined // Remove raw records to save bandwidth
+      };
+    });
+
+    res.status(200).json(processedSummary);
+  } catch (error) {
+    console.error("Error fetching summary:", error);
+    res.status(500).json({ message: 'Error fetching summary' });
+  }
+});
+
 // Get history for a specific driver
 router.get('/:transporterId', auth, async (req, res) => {
   const { transporterId } = req.params;
@@ -179,5 +253,7 @@ router.get('/:transporterId', auth, async (req, res) => {
     res.status(500).json({ message: 'Error fetching history' });
   }
 });
+
+
 
 module.exports = router;
