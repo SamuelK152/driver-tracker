@@ -49,17 +49,24 @@ const Navbar = () => {
               <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10">
                 <Link
                   to="/import"
-                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
                   onClick={() => setIsMetricsOpen(false)}
                 >
                   Import
                 </Link>
                 <Link
                   to="/history"
-                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
                   onClick={() => setIsMetricsOpen(false)}
                 >
                   History
+                </Link>
+                <Link
+                  to="/dispatch"
+                  className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
+                  onClick={() => setIsMetricsOpen(false)}
+                >
+                  Dispatch
                 </Link>
               </div>
             )}

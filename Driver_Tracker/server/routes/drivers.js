@@ -42,23 +42,20 @@ router.post('/', auth, async (req, res) => {
     // Filter out invalid rows
     const validMetrics = metrics.filter(m => m["Transporter Id"] && m["Driver name"]);
 
-    // Get list of transporter IDs to check
-    const transporterIds = validMetrics.map(m => m["Transporter Id"]);
+    if (validMetrics.length === 0) {
+      return res.status(400).json({ message: 'No valid driver data found in file' });
+    }
 
-    // Find existing records for these drivers on this date
-    const existingRecords = await DriverMetric.find({
-      transporterId: { $in: transporterIds },
-      createdAt: { $gte: queryStartDate, $lt: queryEndDate }
-    });
-
-    const existingTransporterIds = new Set(existingRecords.map(r => r.transporterId));
-
-    const formattedMetrics = validMetrics
-      .filter(m => !existingTransporterIds.has(m["Transporter Id"]))
-      .map(m => ({
+    const operations = validMetrics.map(m => {
+      const filter = {
         transporterId: m["Transporter Id"],
+        createdAt: { $gte: queryStartDate, $lt: queryEndDate }
+      };
+
+      const updateData = {
         driverName: m["Driver name"],
         routeCode: m["Route code"],
+        progressStatus: m["Progress Status"],
         projectedRTS: m["Projected Return to Station"],
         deliveryServiceType: m["Delivery Service Type"],
         vin: m["cortex_vin_number"],
@@ -67,23 +64,28 @@ router.post('/', auth, async (req, res) => {
         notStartedStops: Number(m["not started stops"]) || 0,
         totalPackages: Number(m["total packages"]) || 0,
         avgPace: Number(m["cortex_avg_pace_stops_per_hour"]) || 0,
-        signIn: m["App sign in:"],
         signOut: m["App sign out:"],
-        lastStopExecution: m["cortex_last_stop_execution_time"],
         breakTimeUsed: Number(m["cortex_total_break_time_used"]) || 0,
-        createdAt: saveDate
-      })); if (formattedMetrics.length === 0) {
-        if (validMetrics.length > 0) {
-          return res.status(200).json({ message: 'All provided metrics already exist for this date.', count: 0, skipped: validMetrics.length });
-        }
-        return res.status(400).json({ message: 'No valid driver data found in file' });
-      }
+      };
 
-    await DriverMetric.insertMany(formattedMetrics);
+      return {
+        updateOne: {
+          filter: filter,
+          update: { 
+            $set: updateData,
+            $setOnInsert: { createdAt: saveDate, transporterId: m["Transporter Id"] }
+          },
+          upsert: true
+        }
+      };
+    });
+
+    const result = await DriverMetric.bulkWrite(operations);
+    
     res.status(201).json({
       message: 'Metrics saved successfully',
-      count: formattedMetrics.length,
-      skipped: validMetrics.length - formattedMetrics.length
+      inserted: result.upsertedCount,
+      updated: result.modifiedCount,
     });
   } catch (error) {
     console.error("Error saving metrics:", error);
@@ -138,6 +140,23 @@ router.get('/dates', auth, async (req, res) => {
     res.status(200).json(dates.map(d => d._id));
   } catch (error) {
     res.status(500).json({ message: 'Error fetching dates' });
+  }
+});
+
+// Get metrics for today
+router.get('/today', auth, async (req, res) => {
+  try {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+
+    const metrics = await DriverMetric.find({
+      createdAt: { $gte: startOfToday, $lte: endOfToday }
+    }).sort({ driverName: 1 });
+    res.status(200).json(metrics);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching today\'s metrics' });
   }
 });
 
@@ -216,19 +235,19 @@ router.get('/summary', auth, async (req, res) => {
         const timeRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/;
         const match = r.signOut.match(timeRegex);
         if (!match) return;
-        
+
         let hours = parseInt(match[1]);
         const minutes = parseInt(match[2]);
         const period = match[4] ? match[4].toUpperCase() : null;
-        
+
         if (period === "PM" && hours !== 12) hours += 12;
         if (period === "AM" && hours === 12) hours = 0;
-        
+
         const deadlineMinutes = 20 * 60 + 5; // 20:05
         const currentMinutes = hours * 60 + minutes;
         netMinutes += (currentMinutes - deadlineMinutes);
       });
-      
+
       return {
         ...driver,
         targetDiff: netMinutes,

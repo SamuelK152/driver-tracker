@@ -4,6 +4,7 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import ImportMetrics from "./pages/ImportMetrics";
 import History from "./pages/History";
+import Dispatch from "./pages/Dispatch";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navbar from "./components/Navbar";
 
@@ -37,6 +38,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <History />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dispatch"
+              element={
+                <ProtectedRoute>
+                  <Dispatch />
                 </ProtectedRoute>
               }
             />

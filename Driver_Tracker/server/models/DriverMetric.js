@@ -4,6 +4,7 @@ const DriverMetricSchema = new mongoose.Schema({
   transporterId: { type: String, required: true },
   driverName: { type: String, required: true },
   routeCode: String,
+  progressStatus: String,
   projectedRTS: String,
   deliveryServiceType: String,
   vin: String,

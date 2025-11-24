@@ -502,7 +502,7 @@ const History = () => {
       if (viewMode === "drivers") {
         data = data.sort((a, b) => a.driverName.localeCompare(b.driverName));
       }
-      
+
       if (viewMode === "dates") {
         setAvailableDates(data); // Store raw date strings
       } else {
@@ -531,7 +531,7 @@ const History = () => {
     if (viewMode === "dates") {
       // Handle Date Navigation
       // item is the clicked value (year number, month index, week string, or day string)
-      
+
       const newNav = { ...dateNav };
       let start, end;
 
@@ -564,7 +564,9 @@ const History = () => {
         try {
           const token = localStorage.getItem("token");
           const res = await axios.get(
-            `http://localhost:5000/api/drivers/date/${encodeURIComponent(item)}`,
+            `http://localhost:5000/api/drivers/date/${encodeURIComponent(
+              item
+            )}`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
           setHistory(res.data);
@@ -572,7 +574,7 @@ const History = () => {
           console.error(error);
         }
       }
-      
+
       setDateNav(newNav);
       return;
     }
@@ -763,21 +765,24 @@ const History = () => {
           weeks.add(start.toISOString());
         });
 
-        items = [...weeks].sort().reverse().map((w) => {
-          const start = new Date(w);
-          const end = new Date(start);
-          end.setDate(end.getDate() + 6);
-          return {
-            label: `${start.toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-            })} - ${end.toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-            })}`,
-            value: w,
-          };
-        });
+        items = [...weeks]
+          .sort()
+          .reverse()
+          .map((w) => {
+            const start = new Date(w);
+            const end = new Date(start);
+            end.setDate(end.getDate() + 6);
+            return {
+              label: `${start.toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })} - ${end.toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })}`,
+              value: w,
+            };
+          });
         onClick = (item) => handleItemClick(item.value);
       } else if (dateNav.level === "day") {
         backButton = (
@@ -979,15 +984,20 @@ const History = () => {
         const m = Math.abs(netMinutes) % 60;
         const timeStr = `${h}h ${m}m`;
         const isOver = netMinutes > 0;
-        
+
         return (
           <tr key={index} className="border-b">
             <td className="px-4 py-2 font-medium">{driver.driverName}</td>
             <td className="px-4 py-2">{driver.totalStops}</td>
             <td className="px-4 py-2">{driver.totalPackages}</td>
             <td className="px-4 py-2">{driver.avgPace.toFixed(2)}</td>
-            <td className={`px-4 py-2 font-medium ${isOver ? 'text-red-600' : 'text-blue-600'}`}>
-              {isOver ? '+' : '-'}{timeStr}
+            <td
+              className={`px-4 py-2 font-medium ${
+                isOver ? "text-red-600" : "text-blue-600"
+              }`}
+            >
+              {isOver ? "+" : "-"}
+              {timeStr}
             </td>
           </tr>
         );
@@ -1069,7 +1079,20 @@ const History = () => {
       if (dateNav.level === "year") return "Select a Year";
       if (dateNav.level === "month") return `Summary for ${dateNav.year}`;
       if (dateNav.level === "week") {
-        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const monthNames = [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ];
         return `Summary for ${monthNames[dateNav.month]} ${dateNav.year}`;
       }
       if (dateNav.level === "day") {
@@ -1188,23 +1211,42 @@ const History = () => {
     let totalUndertimeMinutes = 0;
 
     if (isAggregated) {
-      totalStops = dataToSummarize.reduce((sum, r) => sum + (r.totalStops || 0), 0);
-      totalPackages = dataToSummarize.reduce((sum, r) => sum + (r.totalPackages || 0), 0);
+      totalStops = dataToSummarize.reduce(
+        (sum, r) => sum + (r.totalStops || 0),
+        0
+      );
+      totalPackages = dataToSummarize.reduce(
+        (sum, r) => sum + (r.totalPackages || 0),
+        0
+      );
       // Weighted average for pace? Or simple average of averages? Simple average for now.
-      avgPace = (dataToSummarize.reduce((sum, r) => sum + (r.avgPace || 0), 0) / dataToSummarize.length).toFixed(2);
-      
-      dataToSummarize.forEach(r => {
+      avgPace = (
+        dataToSummarize.reduce((sum, r) => sum + (r.avgPace || 0), 0) /
+        dataToSummarize.length
+      ).toFixed(2);
+
+      dataToSummarize.forEach((r) => {
         const minutes = r.targetDiff || 0;
         netMinutes += minutes;
         if (minutes > 0) totalOvertimeMinutes += minutes;
         else totalUndertimeMinutes += Math.abs(minutes);
       });
     } else {
-      totalStops = dataToSummarize.reduce((sum, r) => sum + (r.stopsComplete || 0), 0);
-      totalPackages = dataToSummarize.reduce((sum, r) => sum + (r.totalPackages || 0), 0);
-      avgPace = dataToSummarize.length > 0
-        ? (dataToSummarize.reduce((sum, r) => sum + (r.avgPace || 0), 0) / dataToSummarize.length).toFixed(2)
-        : 0;
+      totalStops = dataToSummarize.reduce(
+        (sum, r) => sum + (r.stopsComplete || 0),
+        0
+      );
+      totalPackages = dataToSummarize.reduce(
+        (sum, r) => sum + (r.totalPackages || 0),
+        0
+      );
+      avgPace =
+        dataToSummarize.length > 0
+          ? (
+              dataToSummarize.reduce((sum, r) => sum + (r.avgPace || 0), 0) /
+              dataToSummarize.length
+            ).toFixed(2)
+          : 0;
 
       dataToSummarize.forEach((r) => {
         const minutes = getTargetMinutes(r.signOut);
@@ -1377,7 +1419,8 @@ const History = () => {
             />
           )}
 
-        {(selectedItem || (viewMode === "dates" && dateNav.level !== "year")) && (
+        {(selectedItem ||
+          (viewMode === "dates" && dateNav.level !== "year")) && (
           <div className="overflow-x-auto">
             <table className="min-w-full table-auto">
               <thead className="bg-gray-200">{renderTableHeaders()}</thead>
