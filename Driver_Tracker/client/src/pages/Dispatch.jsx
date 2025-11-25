@@ -7,6 +7,8 @@ const Dispatch = () => {
   const [driverData, setDriverData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [pendingData, setPendingData] = useState([]);
+  const [validationErrors, setValidationErrors] = useState([]);
   const [sortConfig, setSortConfig] = useState({
     key: "driverName",
     direction: "ascending",
@@ -36,6 +38,71 @@ const Dispatch = () => {
     fetchData();
   }, []);
 
+  const validateData = (processedData) => {
+    const newErrors = [];
+
+    // Route code validation
+    const keys = Object.keys(processedData[0] || {});
+    const routeCodeKey =
+      keys.find((k) => k.toLowerCase() === "route code") || "Route Code";
+
+    processedData.forEach((row, index) => {
+      const routeCode = row[routeCodeKey];
+      if (
+        routeCode &&
+        typeof routeCode === "string" &&
+        routeCode.includes("|")
+      ) {
+        newErrors.push({
+          rowIndex: index,
+          field: routeCodeKey,
+          driverName: row["Driver name"] || row["Driver Name"] || "Unknown",
+        });
+      }
+    });
+
+    setValidationErrors(newErrors);
+    return newErrors.length === 0;
+  };
+
+  const handleCorrection = (rowIndex, field, newValue) => {
+    const newData = [...pendingData];
+    newData[rowIndex][field] = newValue;
+    setPendingData(newData);
+  };
+
+  const uploadData = async (dataToUpload) => {
+    try {
+      const token = localStorage.getItem("token");
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, "0");
+      const day = String(today.getDate()).padStart(2, "0");
+      const localDate = `${year}-${month}-${day}`;
+
+      await axios.post(
+        "http://localhost:5000/api/drivers",
+        { metrics: dataToUpload, date: localDate },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      setPendingData([]);
+      setValidationErrors([]);
+      fetchData();
+    } catch (err) {
+      setError("Failed to upload data.");
+      console.error(err);
+    }
+  };
+
+  const revalidateAndUpload = () => {
+    if (validateData(pendingData)) {
+      uploadData(pendingData);
+    }
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -46,20 +113,58 @@ const Dispatch = () => {
         const wb = read(event.target.result, { type: "binary" });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = utils.sheet_to_json(ws);
+        const jsonData = utils.sheet_to_json(ws);
 
-        // Send to backend
-        const token = localStorage.getItem("token");
-        await axios.post(
-          "http://localhost:5000/api/drivers",
-          { metrics: data, date: new Date().toISOString().split("T")[0] },
-          {
-            headers: { Authorization: `Bearer ${token}` },
+        if (jsonData.length === 0) {
+          setError("File is empty");
+          return;
+        }
+
+        const keys = Object.keys(jsonData[0] || {});
+        const routeCodeKey =
+          keys.find((k) => k.toLowerCase() === "route code") || "Route Code";
+
+        // Identify claimed routes (single routes assigned to drivers)
+        const claimedRoutes = new Set();
+        jsonData.forEach((row) => {
+          const routeCode = row[routeCodeKey];
+          if (
+            routeCode &&
+            typeof routeCode === "string" &&
+            !routeCode.includes("|")
+          ) {
+            claimedRoutes.add(routeCode.trim());
           }
-        );
+        });
 
-        // Refresh data
-        fetchData();
+        // Process drivers with multiple routes
+        const processedData = jsonData.map((row) => {
+          const routeCode = row[routeCodeKey];
+          if (
+            routeCode &&
+            typeof routeCode === "string" &&
+            routeCode.includes("|")
+          ) {
+            const codes = routeCode.split("|").map((c) => c.trim());
+            // Filter out codes that are claimed by other drivers
+            const remainingCodes = codes.filter(
+              (code) => !claimedRoutes.has(code)
+            );
+
+            if (remainingCodes.length === 0) {
+              return { ...row, [routeCodeKey]: "RESCUE" };
+            } else {
+              return { ...row, [routeCodeKey]: remainingCodes.join("|") };
+            }
+          }
+          return row;
+        });
+
+        setPendingData(processedData);
+
+        if (validateData(processedData)) {
+          uploadData(processedData);
+        }
       } catch (err) {
         setError("Failed to process file.");
         console.error(err);
@@ -168,6 +273,58 @@ const Dispatch = () => {
         />
       </div>
 
+      {validationErrors.length > 0 && (
+        <div className="bg-red-50 p-4 mb-4 border border-red-200 rounded shadow">
+          <h3 className="text-lg font-bold text-red-700 mb-2">
+            Invalid Data Detected
+          </h3>
+          <p className="text-sm text-red-600 mb-4">
+            Some records have invalid formats (e.g. dates in time fields or
+            multiple route codes). Please correct them.
+          </p>
+          <div className="space-y-3 max-h-96 overflow-y-auto mb-4">
+            {validationErrors.map((error, i) => (
+              <div
+                key={i}
+                className="flex flex-col sm:flex-row sm:items-center gap-2 bg-white p-2 rounded border border-red-100"
+              >
+                <span className="font-semibold min-w-[150px]">
+                  {error.driverName}
+                </span>
+                <span className="text-gray-500 text-sm min-w-[200px]">
+                  {error.field}
+                </span>
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={pendingData[error.rowIndex][error.field]}
+                    onChange={(e) =>
+                      handleCorrection(
+                        error.rowIndex,
+                        error.field,
+                        e.target.value
+                      )
+                    }
+                    className="border border-gray-300 rounded px-2 py-1 w-full focus:border-blue-500 focus:outline-none"
+                    placeholder={
+                      error.field.toLowerCase().includes("route")
+                        ? "e.g. CX53"
+                        : "e.g. 7:41pm"
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={revalidateAndUpload}
+            className="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 font-medium"
+          >
+            Validate & Upload
+          </button>
+        </div>
+      )}
+
       {driverData.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2">
           <button
@@ -237,7 +394,9 @@ const Dispatch = () => {
                     {driver.routeCode} / {driver.vin}
                   </p>
                   <p className="text-sm">Avg Pace: {driver.avgPace}</p>
-                  <p className="text-sm">Projected RTS: {driver.projectedRTS}</p>
+                  <p className="text-sm">
+                    Projected RTS: {driver.projectedRTS}
+                  </p>
                   <p className="text-sm">
                     Stops: {driver.stopsComplete} / {driver.allStops}
                   </p>
@@ -246,7 +405,9 @@ const Dispatch = () => {
                   <button
                     onClick={() =>
                       setOpenMenuId(
-                        openMenuId === driver.transporterId ? null : driver.transporterId
+                        openMenuId === driver.transporterId
+                          ? null
+                          : driver.transporterId
                       )
                     }
                     className="p-1 rounded-full hover:bg-gray-200"
