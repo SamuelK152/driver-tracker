@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { read, utils } from "xlsx";
 
@@ -11,6 +12,8 @@ const Dispatch = () => {
     direction: "ascending",
   });
   const fileInputRef = useRef(null);
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const navigate = useNavigate();
 
   const fetchData = async () => {
     try {
@@ -227,15 +230,54 @@ const Dispatch = () => {
                 driver.progressStatus
               )}`}
             >
-              <h3 className="font-bold text-lg">{driver.driverName}</h3>
-              <p className="text-sm text-gray-500">
-                {driver.routeCode} / {driver.vin}
-              </p>
-              <p className="text-sm">Avg Pace: {driver.avgPace}</p>
-              <p className="text-sm">Projected RTS: {driver.projectedRTS}</p>
-              <p className="text-sm">
-                Stops: {driver.stopsComplete} / {driver.allStops}
-              </p>
+              <div className="flex justify-between items-start">
+                <div className="flex-grow">
+                  <h3 className="font-bold text-lg">{driver.driverName}</h3>
+                  <p className="text-sm text-gray-500">
+                    {driver.routeCode} / {driver.vin}
+                  </p>
+                  <p className="text-sm">Avg Pace: {driver.avgPace}</p>
+                  <p className="text-sm">Projected RTS: {driver.projectedRTS}</p>
+                  <p className="text-sm">
+                    Stops: {driver.stopsComplete} / {driver.allStops}
+                  </p>
+                </div>
+                <div className="relative flex-shrink-0">
+                  <button
+                    onClick={() =>
+                      setOpenMenuId(
+                        openMenuId === driver.transporterId ? null : driver.transporterId
+                      )
+                    }
+                    className="p-1 rounded-full hover:bg-gray-200"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                    </svg>
+                  </button>
+                  {openMenuId === driver.transporterId && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10">
+                      <div className="py-1">
+                        <button
+                          onClick={() => {
+                            navigate("/history", {
+                              state: { selectedDriver: driver },
+                            });
+                          }}
+                          className="text-left w-full block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          History
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           ))}
         </div>

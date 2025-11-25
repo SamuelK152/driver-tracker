@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import axios from "axios";
 
 const MetricsGraph = ({ data, viewMode, timeRange, periodStart }) => {
@@ -428,6 +429,7 @@ const MetricsGraph = ({ data, viewMode, timeRange, periodStart }) => {
 };
 
 const History = () => {
+  const location = useLocation();
   const [viewMode, setViewMode] = useState("drivers"); // 'drivers', 'routes', 'dates'
   const [listData, setListData] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -462,6 +464,17 @@ const History = () => {
   };
 
   useEffect(() => {
+    const driverFromState = location.state?.selectedDriver;
+    if (driverFromState) {
+      setViewMode('drivers');
+      fetchListData(); // Fetch the list of all drivers
+      handleItemClick(driverFromState); // Then select the specific driver
+    } else {
+      fetchListData(); // Default behavior
+    }
+  }, [location.state]);
+
+  useEffect(() => {
     if (currentPeriodStart) {
       if (timeRange === "week") {
         setCurrentPeriodStart(getStartOfWeek(currentPeriodStart));
@@ -472,6 +485,14 @@ const History = () => {
   }, [timeRange]);
 
   useEffect(() => {
+    // This effect should now only handle resets when the viewMode is changed MANUALLY,
+    // not when the component first loads with state from another page.
+    if (location.state?.selectedDriver) {
+      // On initial load from Dispatch, we've already handled this, so we clear the state
+      // to allow normal operation afterward.
+      window.history.replaceState({}, document.title)
+      return;
+    }
     setListData([]); // Clear list data
     setSelectedItem(null);
     setHistory([]);
@@ -981,7 +1002,7 @@ const History = () => {
       return summaryData.map((driver, index) => {
         const netMinutes = driver.targetDiff || 0;
         const h = Math.floor(Math.abs(netMinutes) / 60);
-        const m = Math.abs(netMinutes) % 60;
+        const m = netMinutes % 60;
         const timeStr = `${h}h ${m}m`;
         const isOver = netMinutes > 0;
 
