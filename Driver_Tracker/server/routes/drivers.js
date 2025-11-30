@@ -1,15 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const DriverMetric = require('../models/DriverMetric');
-
-// Middleware to verify token (optional, but requested "login to gain access")
-const auth = (req, res, next) => {
-  // Simple check for now, can be expanded
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) return res.status(401).json({ message: "Auth failed" });
-  // Verify token logic here if needed, or just assume presence for now
-  next();
-};
+const User = require('../models/User');
+const Van = require('../models/Van');
+const Driver = require('../models/Driver');
+const auth = require('../middleware/auth');
 
 // Save metrics
 router.post('/', auth, async (req, res) => {
@@ -46,19 +41,89 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ message: 'No valid driver data found in file' });
     }
 
+    // 1. Auto-create/Update Drivers
+    const driverOps = validMetrics.map(m => ({
+      updateOne: {
+        filter: { transporterId: m["Transporter Id"] },
+        update: {
+          $set: { name: m["Driver name"] },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        upsert: true
+      }
+    }));
+
+    // Deduplicate driver operations based on transporterId
+    const uniqueDriverOps = [];
+    const seenDrivers = new Set();
+    for (const op of driverOps) {
+      const tid = op.updateOne.filter.transporterId;
+      if (!seenDrivers.has(tid)) {
+        seenDrivers.add(tid);
+        uniqueDriverOps.push(op);
+      }
+    }
+
+    if (uniqueDriverOps.length > 0) {
+      await Driver.bulkWrite(uniqueDriverOps);
+    }
+
+    // Fetch all drivers to get IDs
+    const allDrivers = await Driver.find({}, 'transporterId _id');
+    const driverMap = new Map(allDrivers.map(d => [d.transporterId, d._id]));
+
+    // 2. Auto-create/Update Vans
+    const vanOps = [];
+    const seenVins = new Set();
+
+    validMetrics.forEach(m => {
+      const vin = m["cortex_vin_number"];
+      if (vin && !seenVins.has(vin)) {
+        seenVins.add(vin);
+        vanOps.push({
+          updateOne: {
+            filter: { vin: vin },
+            update: {
+              $setOnInsert: {
+                status: 'Active',
+                createdAt: new Date()
+              }
+            },
+            upsert: true
+          }
+        });
+      }
+    });
+
+    if (vanOps.length > 0) {
+      await Van.bulkWrite(vanOps);
+    }
+
+    // Fetch all vans to get IDs
+    const allVans = await Van.find({}, 'vin _id');
+    const vanMap = new Map(allVans.map(v => [v.vin, v._id]));
+
+    // 3. Save Metrics
     const operations = validMetrics.map(m => {
       const filter = {
         transporterId: m["Transporter Id"],
         createdAt: { $gte: queryStartDate, $lt: queryEndDate }
       };
 
+      const vin = m["cortex_vin_number"];
+      const vanId = vanMap.get(vin);
+      const driverId = driverMap.get(m["Transporter Id"]);
+
+      const isUnknownVin = !vin;
+
       const updateData = {
-        driverName: m["Driver name"],
+        driverId: driverId,
         routeCode: m["Route code"],
         progressStatus: m["Progress Status"],
         projectedRTS: m["Projected Return to Station"],
         deliveryServiceType: m["Delivery Service Type"],
-        vin: m["cortex_vin_number"],
+        vin: vin,
+        vanId: vanId,
         allStops: Number(m["All stops"]) || 0,
         stopsComplete: Number(m["Stops complete"]) || 0,
         notStartedStops: Number(m["not started stops"]) || 0,
@@ -71,9 +136,13 @@ router.post('/', auth, async (req, res) => {
       return {
         updateOne: {
           filter: filter,
-          update: { 
+          update: {
             $set: updateData,
-            $setOnInsert: { createdAt: saveDate, transporterId: m["Transporter Id"] }
+            $setOnInsert: {
+              createdAt: saveDate,
+              transporterId: m["Transporter Id"],
+              originalStops: Number(m["All stops"]) || 0
+            }
           },
           upsert: true
         }
@@ -81,7 +150,7 @@ router.post('/', auth, async (req, res) => {
     });
 
     const result = await DriverMetric.bulkWrite(operations);
-    
+
     res.status(201).json({
       message: 'Metrics saved successfully',
       inserted: result.upsertedCount,
@@ -97,18 +166,34 @@ router.get('/list', auth, async (req, res) => {
     const drivers = await DriverMetric.aggregate([
       {
         $group: {
-          _id: { transporterId: "$transporterId", driverName: "$driverName" },
-          lastUpdate: { $max: "$createdAt" }
+          _id: "$transporterId",
+          lastUpdate: { $max: "$createdAt" },
+          driverId: { $first: "$driverId" }
+        }
+      },
+      {
+        $lookup: {
+          from: "drivers",
+          localField: "driverId",
+          foreignField: "_id",
+          as: "driverInfo"
+        }
+      },
+      {
+        $unwind: {
+          path: "$driverInfo",
+          preserveNullAndEmptyArrays: true
         }
       },
       {
         $project: {
-          transporterId: "$_id.transporterId",
-          driverName: "$_id.driverName",
+          transporterId: "$_id",
+          driverName: "$driverInfo.name",
           lastUpdate: 1,
           _id: 0
         }
-      }
+      },
+      { $sort: { driverName: 1 } }
     ]);
     res.status(200).json(drivers);
   } catch (error) {
@@ -146,6 +231,11 @@ router.get('/dates', auth, async (req, res) => {
 // Get metrics for today
 router.get('/today', auth, async (req, res) => {
   try {
+    const user = await User.findById(req.userData.id);
+    const targetTime = user?.settings?.targetClockOutTime || "20:05";
+    const [targetHours, targetMinutes] = targetTime.split(':').map(Number);
+    const deadlineMinutes = targetHours * 60 + targetMinutes;
+
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const endOfToday = new Date();
@@ -153,9 +243,70 @@ router.get('/today', auth, async (req, res) => {
 
     const metrics = await DriverMetric.find({
       createdAt: { $gte: startOfToday, $lte: endOfToday }
-    }).sort({ driverName: 1 });
-    res.status(200).json(metrics);
+    })
+      .populate('driverId')
+      .populate('vanId');
+
+    // Sort by driver name
+    metrics.sort((a, b) => {
+      const nameA = a.driverId?.name || '';
+      const nameB = b.driverId?.name || '';
+      return nameA.localeCompare(nameB);
+    });
+
+    // Calculate start of the week (Sunday)
+    const startOfWeek = new Date(startOfToday);
+    startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    // Get all metrics for the current week for the drivers in today's list
+    const transporterIds = metrics.map(m => m.transporterId);
+
+    const weeklyMetrics = await DriverMetric.find({
+      transporterId: { $in: transporterIds },
+      createdAt: { $gte: startOfWeek, $lte: endOfToday }
+    });
+
+    // Group by transporterId
+    const weeklyDataByDriver = {};
+    weeklyMetrics.forEach(m => {
+      if (!weeklyDataByDriver[m.transporterId]) {
+        weeklyDataByDriver[m.transporterId] = [];
+      }
+      weeklyDataByDriver[m.transporterId].push(m);
+    });
+
+    // Calculate summary for each driver and attach to today's metrics
+    const metricsWithSummary = metrics.map(m => {
+      const driverWeekly = weeklyDataByDriver[m.transporterId] || [];
+      let netMinutes = 0;
+
+      driverWeekly.forEach(r => {
+        if (!r.signOut) return;
+        const timeRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/;
+        const match = r.signOut.match(timeRegex);
+        if (!match) return;
+
+        let hours = parseInt(match[1]);
+        const minutes = parseInt(match[2]);
+        const period = match[4] ? match[4].toUpperCase() : null;
+
+        if (period === "PM" && hours !== 12) hours += 12;
+        if (period === "AM" && hours === 12) hours = 0;
+
+        const currentMinutes = hours * 60 + minutes;
+        netMinutes += (currentMinutes - deadlineMinutes);
+      });
+
+      return {
+        ...m.toObject(),
+        weeklyNetMinutes: netMinutes
+      };
+    });
+
+    res.status(200).json(metricsWithSummary);
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Error fetching today\'s metrics' });
   }
 });
@@ -164,7 +315,10 @@ router.get('/today', auth, async (req, res) => {
 router.get('/route/:routeCode', auth, async (req, res) => {
   const { routeCode } = req.params;
   try {
-    const history = await DriverMetric.find({ routeCode }).sort({ createdAt: -1 });
+    const history = await DriverMetric.find({ routeCode })
+      .sort({ createdAt: -1 })
+      .populate('driverId')
+      .populate('vanId');
     res.status(200).json(history);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching route history' });
@@ -181,7 +335,15 @@ router.get('/date/:date', auth, async (req, res) => {
 
     const history = await DriverMetric.find({
       createdAt: { $gte: startDate, $lt: endDate }
-    }).sort({ driverName: 1 });
+    })
+      .populate('driverId')
+      .populate('vanId');
+
+    history.sort((a, b) => {
+      const nameA = a.driverId?.name || '';
+      const nameB = b.driverId?.name || '';
+      return nameA.localeCompare(nameB);
+    });
     res.status(200).json(history);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching date history' });
@@ -192,6 +354,11 @@ router.get('/date/:date', auth, async (req, res) => {
 router.get('/summary', auth, async (req, res) => {
   const { start, end } = req.query;
   try {
+    const user = await User.findById(req.userData.id);
+    const targetTime = user?.settings?.targetClockOutTime || "20:05";
+    const [targetHours, targetMinutes] = targetTime.split(':').map(Number);
+    const deadlineMinutes = targetHours * 60 + targetMinutes;
+
     const startDate = new Date(start);
     const endDate = new Date(end);
     // Adjust endDate to include the full day
@@ -206,7 +373,8 @@ router.get('/summary', auth, async (req, res) => {
       },
       {
         $group: {
-          _id: { transporterId: "$transporterId", driverName: "$driverName" },
+          _id: "$transporterId",
+          driverId: { $first: "$driverId" },
           totalStops: { $sum: "$stopsComplete" },
           totalPackages: { $sum: "$totalPackages" },
           avgPace: { $avg: "$avgPace" },
@@ -214,9 +382,23 @@ router.get('/summary', auth, async (req, res) => {
         }
       },
       {
+        $lookup: {
+          from: "drivers",
+          localField: "driverId",
+          foreignField: "_id",
+          as: "driverInfo"
+        }
+      },
+      {
+        $unwind: {
+          path: "$driverInfo",
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
         $project: {
-          transporterId: "$_id.transporterId",
-          driverName: "$_id.driverName",
+          transporterId: "$_id",
+          driverName: "$driverInfo.name",
           totalStops: 1,
           totalPackages: 1,
           avgPace: 1,
@@ -243,7 +425,6 @@ router.get('/summary', auth, async (req, res) => {
         if (period === "PM" && hours !== 12) hours += 12;
         if (period === "AM" && hours === 12) hours = 0;
 
-        const deadlineMinutes = 20 * 60 + 5; // 20:05
         const currentMinutes = hours * 60 + minutes;
         netMinutes += (currentMinutes - deadlineMinutes);
       });
@@ -266,13 +447,83 @@ router.get('/summary', auth, async (req, res) => {
 router.get('/:transporterId', auth, async (req, res) => {
   const { transporterId } = req.params;
   try {
-    const history = await DriverMetric.find({ transporterId }).sort({ createdAt: -1 });
+    const history = await DriverMetric.find({ transporterId })
+      .sort({ createdAt: -1 })
+      .populate('vanId')
+      .populate('assignedEquipment')
+      .populate('driverId');
     res.status(200).json(history);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching history' });
   }
 });
 
+// Update driver note
+router.patch('/:id/note', auth, async (req, res) => {
+  const { id } = req.params;
+  const { note } = req.body;
+  try {
+    const updatedMetric = await DriverMetric.findByIdAndUpdate(
+      id,
+      { $set: { note } },
+      { new: true }
+    );
 
+    if (!updatedMetric) {
+      return res.status(404).json({ message: 'Driver metric not found' });
+    }
+
+    res.status(200).json(updatedMetric);
+  } catch (error) {
+    console.error("Error updating note:", error);
+    res.status(500).json({ message: 'Error updating note' });
+  }
+});
+
+// Perform a rescue (transfer stops)
+router.post('/rescue', auth, async (req, res) => {
+  const { rescuerId, rescueeId, stopCount } = req.body;
+
+  if (!rescuerId || !rescueeId || !stopCount || stopCount <= 0) {
+    return res.status(400).json({ message: 'Invalid rescue parameters' });
+  }
+
+  try {
+    // Find both driver metrics
+    const rescuer = await DriverMetric.findById(rescuerId).populate('driverId');
+    const rescuee = await DriverMetric.findById(rescueeId).populate('driverId');
+
+    if (!rescuer || !rescuee) {
+      return res.status(404).json({ message: 'One or both drivers not found' });
+    }
+
+    // Update Rescuee (Giver)
+    rescuee.rescuedStops = (rescuee.rescuedStops || 0) + Number(stopCount);
+    rescuee.allStops = (rescuee.allStops || 0) - Number(stopCount);
+    rescuee.rescueLog.push({
+      type: 'GAVE',
+      count: Number(stopCount),
+      otherDriverName: rescuer.driverId ? rescuer.driverId.name : 'Unknown',
+      timestamp: new Date()
+    });
+    await rescuee.save();
+
+    // Update Rescuer (Receiver)
+    rescuer.rescueStops = (rescuer.rescueStops || 0) + Number(stopCount);
+    rescuer.allStops = (rescuer.allStops || 0) + Number(stopCount);
+    rescuer.rescueLog.push({
+      type: 'RECEIVED',
+      count: Number(stopCount),
+      otherDriverName: rescuee.driverId ? rescuee.driverId.name : 'Unknown',
+      timestamp: new Date()
+    });
+    await rescuer.save();
+
+    res.status(200).json({ message: 'Rescue processed successfully', rescuer, rescuee });
+  } catch (error) {
+    console.error("Error processing rescue:", error);
+    res.status(500).json({ message: 'Error processing rescue', error: error.message });
+  }
+});
 
 module.exports = router;

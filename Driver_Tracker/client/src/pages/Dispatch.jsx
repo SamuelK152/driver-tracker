@@ -13,9 +13,65 @@ const Dispatch = () => {
     key: "driverName",
     direction: "ascending",
   });
+  const [filters, setFilters] = useState({
+    behindAtRisk: true,
+    onTime: true,
+    ahead: true,
+    other: true,
+    over: true,
+    under: true,
+    par: true,
+  });
   const fileInputRef = useRef(null);
   const [openMenuId, setOpenMenuId] = useState(null);
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [currentNoteDriver, setCurrentNoteDriver] = useState(null);
+  const [noteText, setNoteText] = useState("");
+
+  // Rescue Modal State
+  const [isRescueModalOpen, setIsRescueModalOpen] = useState(false);
+  const [currentRescuer, setCurrentRescuer] = useState(null);
+  const [selectedRescueeId, setSelectedRescueeId] = useState("");
+  const [rescueStopCount, setRescueStopCount] = useState("");
+
   const navigate = useNavigate();
+
+  const openRescueModal = (driver) => {
+    setCurrentRescuer(driver);
+    setRescueStopCount("");
+    setSelectedRescueeId("");
+    setIsRescueModalOpen(true);
+    setOpenMenuId(null);
+  };
+
+  const handleRescue = async () => {
+    if (!selectedRescueeId || !rescueStopCount || rescueStopCount <= 0) {
+      alert(
+        "Please select a driver to rescue and enter a valid number of stops."
+      );
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      await axios.post(
+        "http://localhost:5000/api/drivers/rescue",
+        {
+          rescuerId: currentRescuer._id,
+          rescueeId: selectedRescueeId,
+          stopCount: rescueStopCount,
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      setIsRescueModalOpen(false);
+      fetchData(); // Refresh data
+    } catch (err) {
+      console.error("Rescue failed:", err);
+      alert("Failed to process rescue.");
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -175,7 +231,7 @@ const Dispatch = () => {
 
   const requestSort = (key) => {
     let direction = "ascending";
-    if (key === "projectedRTS" || key === "allStops") {
+    if (key === "projectedRTS" || key === "allStops" || key === "timeSummary") {
       const startDirection = "descending";
       if (sortConfig.key !== key) {
         direction = startDirection;
@@ -200,42 +256,95 @@ const Dispatch = () => {
   };
 
   const sortedDriverData = useMemo(() => {
-    let sortableItems = [...driverData];
+    const filteredData = driverData.filter((driver) => {
+      const status = driver.progressStatus;
+      let statusMatch = false;
+      if (
+        filters.behindAtRisk &&
+        (status === "BEHIND" || status === "AT_RISK")
+      ) {
+        statusMatch = true;
+      }
+      if (filters.onTime && status === "ON_TIME") statusMatch = true;
+      if (filters.ahead && (status === "AHEAD" || status === "COMPLETE")) {
+        statusMatch = true;
+      }
+      if (filters.other && (status === "NOT_APPLICABLE" || !status)) {
+        statusMatch = true;
+      }
+
+      const netMinutes = driver.weeklyNetMinutes || 0;
+      let timeMatch = false;
+      if (filters.over && netMinutes > 0) timeMatch = true;
+      if (filters.under && netMinutes < 0) timeMatch = true;
+      if (filters.par && netMinutes === 0) timeMatch = true;
+
+      return statusMatch && timeMatch;
+    });
+
+    let sortableItems = [...filteredData];
     if (sortConfig.key) {
-      sortableItems.sort((a, b) => {
-        let aValue = a[sortConfig.key];
-        let bValue = b[sortConfig.key];
+      if (sortConfig.key === "timeSummary") {
+        const over = sortableItems.filter((d) => (d.weeklyNetMinutes || 0) > 0);
+        const under = sortableItems.filter(
+          (d) => (d.weeklyNetMinutes || 0) < 0
+        );
+        const par = sortableItems.filter(
+          (d) => (d.weeklyNetMinutes || 0) === 0
+        );
 
-        // Custom sort logic
-        if (sortConfig.key === "projectedRTS") {
-          const parseTime = (timeStr) => {
-            if (!timeStr || timeStr === "Missing") return 0;
-            const match = timeStr.match(/(\d{1,2}):(\d{2})(am|pm)/i);
-            if (!match) return 0;
-            let [_, hours, minutes, period] = match;
-            hours = parseInt(hours);
-            if (period.toLowerCase() === "pm" && hours !== 12) hours += 12;
-            if (period.toLowerCase() === "am" && hours === 12) hours = 0;
-            return hours * 60 + parseInt(minutes);
-          };
-          aValue = parseTime(a.projectedRTS);
-          bValue = parseTime(b.projectedRTS);
-        } else if (sortConfig.key === "stops") {
-          aValue = a.allStops > 0 ? a.stopsComplete / a.allStops : 0;
-          bValue = b.allStops > 0 ? b.stopsComplete / b.allStops : 0;
+        if (sortConfig.direction === "descending") {
+          // Overtime Focus: Most Overtime -> Least Overtime, then Least Undertime -> Most Undertime
+          over.sort((a, b) => b.weeklyNetMinutes - a.weeklyNetMinutes);
+          under.sort((a, b) => b.weeklyNetMinutes - a.weeklyNetMinutes);
+          sortableItems = [...over, ...under, ...par];
+        } else {
+          // Undertime Focus: Most Undertime -> Least Undertime, then Least Overtime -> Most Overtime
+          under.sort((a, b) => a.weeklyNetMinutes - b.weeklyNetMinutes);
+          over.sort((a, b) => a.weeklyNetMinutes - b.weeklyNetMinutes);
+          sortableItems = [...under, ...over, ...par];
         }
+      } else {
+        sortableItems.sort((a, b) => {
+          let aValue = a[sortConfig.key];
+          let bValue = b[sortConfig.key];
 
-        if (aValue < bValue) {
-          return sortConfig.direction === "ascending" ? -1 : 1;
-        }
-        if (aValue > bValue) {
-          return sortConfig.direction === "ascending" ? 1 : -1;
-        }
-        return 0;
-      });
+          if (sortConfig.key === "driverName") {
+            aValue = a.driverName || a.driverId?.name || "";
+            bValue = b.driverName || b.driverId?.name || "";
+          }
+
+          // Custom sort logic
+          if (sortConfig.key === "projectedRTS") {
+            const parseTime = (timeStr) => {
+              if (!timeStr || timeStr === "Missing") return 0;
+              const match = timeStr.match(/(\d{1,2}):(\d{2})(am|pm)/i);
+              if (!match) return 0;
+              let [_, hours, minutes, period] = match;
+              hours = parseInt(hours);
+              if (period.toLowerCase() === "pm" && hours !== 12) hours += 12;
+              if (period.toLowerCase() === "am" && hours === 12) hours = 0;
+              return hours * 60 + parseInt(minutes);
+            };
+            aValue = parseTime(a.projectedRTS);
+            bValue = parseTime(b.projectedRTS);
+          } else if (sortConfig.key === "stops") {
+            aValue = a.allStops > 0 ? a.stopsComplete / a.allStops : 0;
+            bValue = b.allStops > 0 ? b.stopsComplete / b.allStops : 0;
+          }
+
+          if (aValue < bValue) {
+            return sortConfig.direction === "ascending" ? -1 : 1;
+          }
+          if (aValue > bValue) {
+            return sortConfig.direction === "ascending" ? 1 : -1;
+          }
+          return 0;
+        });
+      }
     }
     return sortableItems;
-  }, [driverData, sortConfig]);
+  }, [driverData, sortConfig, filters]);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -249,8 +358,80 @@ const Dispatch = () => {
         return "bg-blue-100 border border-blue-200";
       case "COMPLETE":
         return "bg-green-100 border border-green-200";
+      case "NOT_APPLICABLE":
+        return "bg-gray-100 border border-gray-200";
       default:
         return "bg-white";
+    }
+  };
+
+  const formatTimeSummary = (minutes) => {
+    if (!minutes) return "0m";
+    const absMinutes = Math.abs(minutes);
+    const h = Math.floor(absMinutes / 60);
+    const m = absMinutes % 60;
+    const sign = minutes > 0 ? "+" : "-";
+    if (h > 0) return `${sign}${h}h ${m}m`;
+    return `${sign}${m}m`;
+  };
+
+  const getTimeSummaryColor = (minutes) => {
+    if (!minutes || minutes === 0) return "text-gray-900";
+    if (minutes > 0) return "text-red-600 font-bold";
+    return "text-blue-600 font-bold";
+  };
+
+  const handleFilterChange = (key) => {
+    setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleAllFilters = () => {
+    const allChecked = Object.values(filters).every(Boolean);
+    const newState = !allChecked;
+    setFilters({
+      behindAtRisk: newState,
+      onTime: newState,
+      ahead: newState,
+      other: newState,
+      over: newState,
+      under: newState,
+      par: newState,
+    });
+  };
+
+  const openNoteModal = (driver) => {
+    setCurrentNoteDriver(driver);
+    setNoteText(driver.note || "");
+    setIsNoteModalOpen(true);
+    setOpenMenuId(null);
+  };
+
+  const handleSaveNote = async () => {
+    if (!currentNoteDriver) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      await axios.patch(
+        `http://localhost:5000/api/drivers/${currentNoteDriver._id}/note`,
+        { note: noteText },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      // Update local state
+      setDriverData((prevData) =>
+        prevData.map((d) =>
+          d._id === currentNoteDriver._id ? { ...d, note: noteText } : d
+        )
+      );
+
+      setIsNoteModalOpen(false);
+      setCurrentNoteDriver(null);
+      setNoteText("");
+    } catch (err) {
+      console.error("Failed to save note", err);
+      alert("Failed to save note. Please try again.");
     }
   };
 
@@ -326,45 +507,154 @@ const Dispatch = () => {
       )}
 
       {driverData.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          <button
-            onClick={() => requestSort("projectedRTS")}
-            className={`px-3 py-1 rounded text-sm font-medium border ${
-              sortConfig.key === "projectedRTS"
-                ? "bg-blue-500 text-white"
-                : "bg-white"
-            }`}
-          >
-            Sort by RTS
-          </button>
-          <button
-            onClick={() => requestSort("stops")}
-            className={`px-3 py-1 rounded text-sm font-medium border ${
-              sortConfig.key === "stops" ? "bg-blue-500 text-white" : "bg-white"
-            }`}
-          >
-            Sort by Progress
-          </button>
-          <button
-            onClick={() => requestSort("allStops")}
-            className={`px-3 py-1 rounded text-sm font-medium border ${
-              sortConfig.key === "allStops"
-                ? "bg-blue-500 text-white"
-                : "bg-white"
-            }`}
-          >
-            Sort by Stops
-          </button>
-          <button
-            onClick={() => requestSort("avgPace")}
-            className={`px-3 py-1 rounded text-sm font-medium border ${
-              sortConfig.key === "avgPace"
-                ? "bg-blue-500 text-white"
-                : "bg-white"
-            }`}
-          >
-            Sort by Pace
-          </button>
+        <div className="mb-4 flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => requestSort("projectedRTS")}
+              className={`px-3 py-1 rounded text-sm font-medium border ${
+                sortConfig.key === "projectedRTS"
+                  ? "bg-blue-500 text-white"
+                  : "bg-white"
+              }`}
+            >
+              Sort by RTS
+            </button>
+            <button
+              onClick={() => requestSort("stops")}
+              className={`px-3 py-1 rounded text-sm font-medium border ${
+                sortConfig.key === "stops"
+                  ? "bg-blue-500 text-white"
+                  : "bg-white"
+              }`}
+            >
+              Sort by Progress
+            </button>
+            <button
+              onClick={() => requestSort("allStops")}
+              className={`px-3 py-1 rounded text-sm font-medium border ${
+                sortConfig.key === "allStops"
+                  ? "bg-blue-500 text-white"
+                  : "bg-white"
+              }`}
+            >
+              Sort by Stops
+            </button>
+            <button
+              onClick={() => requestSort("avgPace")}
+              className={`px-3 py-1 rounded text-sm font-medium border ${
+                sortConfig.key === "avgPace"
+                  ? "bg-blue-500 text-white"
+                  : "bg-white"
+              }`}
+            >
+              Sort by Pace
+            </button>
+            <button
+              onClick={() => requestSort("timeSummary")}
+              className={`px-3 py-1 rounded text-sm font-medium border ${
+                sortConfig.key === "timeSummary"
+                  ? "bg-blue-500 text-white"
+                  : "bg-white"
+              }`}
+            >
+              Sort by Time Summary
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-4 items-center bg-gray-50 p-2 rounded border">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Object.values(filters).every(Boolean)}
+                onChange={toggleAllFilters}
+                className="form-checkbox h-4 w-4 text-blue-600"
+              />
+              <span className="text-sm font-medium">All</span>
+            </label>
+            <div className="h-4 w-px bg-gray-300 mx-2"></div>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.behindAtRisk}
+                onChange={() => handleFilterChange("behindAtRisk")}
+                className="form-checkbox h-4 w-4 text-red-600"
+              />
+              <span className="text-sm">BEHIND/AT_RISK</span>
+            </label>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.onTime}
+                onChange={() => handleFilterChange("onTime")}
+                className="form-checkbox h-4 w-4 text-yellow-600"
+              />
+              <span className="text-sm">ON_TIME</span>
+            </label>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.ahead}
+                onChange={() => handleFilterChange("ahead")}
+                className="form-checkbox h-4 w-4 text-blue-600"
+              />
+              <span className="text-sm">AHEAD</span>
+            </label>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.ahead}
+                onChange={() => handleFilterChange("ahead")}
+                className="form-checkbox h-4 w-4 text-blue-600"
+              />
+              <span className="text-sm">AHEAD</span>
+            </label>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.other}
+                onChange={() => handleFilterChange("other")}
+                className="form-checkbox h-4 w-4 text-gray-600"
+              />
+              <span className="text-sm">Other</span>
+            </label>
+
+            <div className="h-4 w-px bg-gray-300 mx-2"></div>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.over}
+                onChange={() => handleFilterChange("over")}
+                className="form-checkbox h-4 w-4 text-red-600"
+              />
+              <span className="text-sm">Over</span>
+            </label>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.under}
+                onChange={() => handleFilterChange("under")}
+                className="form-checkbox h-4 w-4 text-blue-600"
+              />
+              <span className="text-sm">Under</span>
+            </label>
+
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.par}
+                onChange={() => handleFilterChange("par")}
+                className="form-checkbox h-4 w-4 text-gray-600"
+              />
+              <span className="text-sm">Par</span>
+            </label>
+          </div>
         </div>
       )}
 
@@ -389,17 +679,52 @@ const Dispatch = () => {
             >
               <div className="flex justify-between items-start">
                 <div className="flex-grow">
-                  <h3 className="font-bold text-lg">{driver.driverName}</h3>
+                  <h3 className="font-bold text-lg">
+                    {driver.driverName || driver.driverId?.name}
+                  </h3>
                   <p className="text-sm text-gray-500">
-                    {driver.routeCode} / {driver.vin}
+                    {driver.routeCode} / {driver.vanId?.vin || driver.vin}
                   </p>
                   <p className="text-sm">Avg Pace: {driver.avgPace}</p>
                   <p className="text-sm">
                     Projected RTS: {driver.projectedRTS}
                   </p>
                   <p className="text-sm">
-                    Stops: {driver.stopsComplete} / {driver.allStops}
+                    Stops: {driver.stopsComplete} /{" "}
+                    {driver.originalStops ||
+                      driver.allStops -
+                        (driver.rescueStops || 0) +
+                        (driver.rescuedStops || 0)}
+                    {(driver.rescueStops > 0 || driver.rescuedStops > 0) && (
+                      <>
+                        <span className="text-gray-700 ml-1">|</span>
+                        <span
+                          className={`text-xs font-semibold ml-1 ${
+                            driver.rescueStops > 0
+                              ? "text-green-600"
+                              : "text-red-600"
+                          }`}
+                        >
+                          {driver.rescueStops > 0
+                            ? `+${driver.rescueStops}`
+                            : `-${driver.rescuedStops}`}{" "}
+                          ({driver.allStops})
+                        </span>
+                      </>
+                    )}
                   </p>
+                  <p
+                    className={`text-sm ${getTimeSummaryColor(
+                      driver.weeklyNetMinutes
+                    )}`}
+                  >
+                    Time Summary: {formatTimeSummary(driver.weeklyNetMinutes)}
+                  </p>
+                  {driver.note && (
+                    <p className="text-sm text-gray-600 mt-1 italic border-t pt-1">
+                      Note: {driver.note}
+                    </p>
+                  )}
                 </div>
                 <div className="relative flex-shrink-0">
                   <button
@@ -434,6 +759,18 @@ const Dispatch = () => {
                         >
                           History
                         </button>
+                        <button
+                          onClick={() => openNoteModal(driver)}
+                          className="text-left w-full block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Add Note
+                        </button>
+                        <button
+                          onClick={() => openRescueModal(driver)}
+                          className="text-left w-full block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Rescue
+                        </button>
                       </div>
                     </div>
                   )}
@@ -441,6 +778,132 @@ const Dispatch = () => {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {isNoteModalOpen && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-semibold mb-4">
+              Note for{" "}
+              {currentNoteDriver?.driverName ||
+                currentNoteDriver?.driverId?.name}
+            </h3>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              className="border border-gray-300 rounded px-3 py-2 w-full h-24 resize-none focus:border-blue-500 focus:outline-none"
+              placeholder="Enter your note here..."
+            ></textarea>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setIsNoteModalOpen(false)}
+                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveNote}
+                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+              >
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isNoteModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
+            <h3 className="text-lg font-bold mb-4">
+              Add Note for{" "}
+              {currentNoteDriver?.driverName ||
+                currentNoteDriver?.driverId?.name}
+            </h3>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              className="w-full border border-gray-300 rounded p-2 mb-4 h-32 focus:outline-none focus:border-blue-500"
+              placeholder="Enter note here..."
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setIsNoteModalOpen(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveNote}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isRescueModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
+            <h3 className="text-lg font-bold mb-4">
+              Assign Rescue for{" "}
+              {currentRescuer?.driverName || currentRescuer?.driverId?.name}
+            </h3>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Select Driver to Rescue (Giver)
+              </label>
+              <select
+                value={selectedRescueeId}
+                onChange={(e) => setSelectedRescueeId(e.target.value)}
+                className="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500"
+              >
+                <option value="">-- Select Driver --</option>
+                {driverData
+                  .filter((d) => d._id !== currentRescuer?._id)
+                  .sort((a, b) =>
+                    (a.driverName || "").localeCompare(b.driverName || "")
+                  )
+                  .map((d) => (
+                    <option key={d._id} value={d._id}>
+                      {d.driverName || d.driverId?.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Number of Stops
+              </label>
+              <input
+                type="number"
+                value={rescueStopCount}
+                onChange={(e) => setRescueStopCount(e.target.value)}
+                className="w-full border border-gray-300 rounded p-2 focus:outline-none focus:border-blue-500"
+                placeholder="e.g. 20"
+                min="1"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setIsRescueModalOpen(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRescue}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+              >
+                Confirm Rescue
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

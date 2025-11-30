@@ -2,7 +2,11 @@ const mongoose = require('mongoose');
 
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  password: { type: String, required: true }
+  password: { type: String, required: true },
+  settings: {
+    timezone: { type: String, default: 'UTC' },
+    targetClockOutTime: { type: String, default: '17:00' }
+  }
 });
 
 module.exports = mongoose.model('User', UserSchema);

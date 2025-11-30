@@ -2,7 +2,13 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 
-const MetricsGraph = ({ data, viewMode, timeRange, periodStart }) => {
+const MetricsGraph = ({
+  data,
+  viewMode,
+  timeRange,
+  periodStart,
+  targetClockOutTime,
+}) => {
   const [hoverIndex, setHoverIndex] = useState(null);
   const [hoverMetric, setHoverMetric] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -61,7 +67,8 @@ const MetricsGraph = ({ data, viewMode, timeRange, periodStart }) => {
       if (!isMissing) {
         label = d.routeCode;
         if (viewMode === "routes") {
-          label = d.driverNames ? d.driverNames.join("|") : d.driverName;
+          const name = d.driverName || d.driverId?.name;
+          label = d.driverNames ? d.driverNames.join("|") : name;
         }
       }
 
@@ -76,7 +83,12 @@ const MetricsGraph = ({ data, viewMode, timeRange, periodStart }) => {
         const period = match[4] ? match[4].toUpperCase() : null;
         if (period === "PM" && hours !== 12) hours += 12;
         if (period === "AM" && hours === 12) hours = 0;
-        const deadlineMinutes = 20 * 60 + 5;
+
+        const [targetHours, targetMinutes] = (targetClockOutTime || "20:05")
+          .split(":")
+          .map(Number);
+        const deadlineMinutes = targetHours * 60 + targetMinutes;
+
         const currentMinutes = hours * 60 + minutes;
         return currentMinutes - deadlineMinutes;
       };
@@ -99,7 +111,7 @@ const MetricsGraph = ({ data, viewMode, timeRange, periodStart }) => {
         isPast,
       };
     });
-  }, [data, timeRange, periodStart, viewMode]);
+  }, [data, timeRange, periodStart, viewMode, targetClockOutTime]);
 
   if (!graphData.length) return null;
 
@@ -436,6 +448,7 @@ const History = () => {
   const [history, setHistory] = useState([]);
   const [timeRange, setTimeRange] = useState("week");
   const [currentPeriodStart, setCurrentPeriodStart] = useState(null);
+  const [targetClockOutTime, setTargetClockOutTime] = useState("20:05");
 
   // Date Navigation State
   const [dateNav, setDateNav] = useState({
@@ -464,9 +477,33 @@ const History = () => {
   };
 
   useEffect(() => {
+    const fetchSettings = async () => {
+      const token = localStorage.getItem("token");
+      try {
+        const response = await fetch(
+          "http://localhost:5000/api/auth/settings",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        const data = await response.json();
+        if (response.ok && data.targetClockOutTime) {
+          setTargetClockOutTime(data.targetClockOutTime);
+        }
+      } catch (err) {
+        console.error("Error fetching settings:", err);
+      }
+    };
+
+    fetchSettings();
+  }, []);
+
+  useEffect(() => {
     const driverFromState = location.state?.selectedDriver;
     if (driverFromState) {
-      setViewMode('drivers');
+      setViewMode("drivers");
       fetchListData(); // Fetch the list of all drivers
       handleItemClick(driverFromState); // Then select the specific driver
     } else {
@@ -490,7 +527,7 @@ const History = () => {
     if (location.state?.selectedDriver) {
       // On initial load from Dispatch, we've already handled this, so we clear the state
       // to allow normal operation afterward.
-      window.history.replaceState({}, document.title)
+      window.history.replaceState({}, document.title);
       return;
     }
     setListData([]); // Clear list data
@@ -520,7 +557,7 @@ const History = () => {
       });
 
       let data = res.data;
-      if (viewMode === "drivers") {
+      if (viewMode === "drivers" || viewMode === "rescues") {
         data = data.sort((a, b) => a.driverName.localeCompare(b.driverName));
       }
 
@@ -604,7 +641,7 @@ const History = () => {
     try {
       const token = localStorage.getItem("token");
       let url = "";
-      if (viewMode === "drivers")
+      if (viewMode === "drivers" || viewMode === "rescues")
         url = `http://localhost:5000/api/drivers/${encodeURIComponent(
           item.transporterId
         )}`;
@@ -654,7 +691,10 @@ const History = () => {
         setHistory(res.data);
 
         // Set initial period for drivers
-        if (viewMode === "drivers" && res.data.length > 0) {
+        if (
+          (viewMode === "drivers" || viewMode === "rescues") &&
+          res.data.length > 0
+        ) {
           const dates = res.data.map((d) => new Date(d.createdAt));
           const maxDate = new Date(Math.max.apply(null, dates));
           setCurrentPeriodStart(
@@ -662,7 +702,7 @@ const History = () => {
               ? getStartOfMonth(maxDate)
               : getStartOfWeek(maxDate)
           );
-        } else if (viewMode === "drivers") {
+        } else if (viewMode === "drivers" || viewMode === "rescues") {
           setCurrentPeriodStart(
             timeRange === "month"
               ? getStartOfMonth(new Date())
@@ -868,19 +908,37 @@ const History = () => {
       <ul>
         {listData.map((item, index) => {
           // Safety check for data type mismatch during view transition
-          if (viewMode === "drivers" && typeof item !== "object") return null;
-          if (viewMode !== "drivers" && typeof item === "object") return null;
+          if (
+            (viewMode === "drivers" || viewMode === "rescues") &&
+            typeof item !== "object"
+          )
+            return null;
+          if (
+            viewMode !== "drivers" &&
+            viewMode !== "rescues" &&
+            typeof item === "object"
+          )
+            return null;
 
           // Ensure key is a string or number, not an object
-          const key = viewMode === "drivers" ? item.transporterId : item;
+          const key =
+            viewMode === "drivers" || viewMode === "rescues"
+              ? item.transporterId
+              : item;
 
           // Ensure label is a string
-          const label = viewMode === "drivers" ? item.driverName : item;
+          const label =
+            viewMode === "drivers" || viewMode === "rescues"
+              ? item.driverName
+              : item;
 
-          const subLabel = viewMode === "drivers" ? item.transporterId : "";
+          const subLabel =
+            viewMode === "drivers" || viewMode === "rescues"
+              ? item.transporterId
+              : "";
 
           const isSelected =
-            viewMode === "drivers"
+            viewMode === "drivers" || viewMode === "rescues"
               ? selectedItem?.transporterId === item.transporterId
               : selectedItem === item;
 
@@ -909,6 +967,8 @@ const History = () => {
         <tr>
           <th className="px-4 py-2">Date</th>
           <th className="px-4 py-2">Route</th>
+          <th className="px-4 py-2">Van</th>
+          <th className="px-4 py-2">Equipment</th>
           <th className="px-4 py-2">Stops</th>
           <th className="px-4 py-2">Packages</th>
           <th className="px-4 py-2">Pace</th>
@@ -916,6 +976,7 @@ const History = () => {
           <th className="px-4 py-2">Last Stop</th>
           <th className="px-4 py-2">Sign Out</th>
           <th className="px-4 py-2">Target</th>
+          <th className="px-4 py-2">Note</th>
         </tr>
       );
     } else if (viewMode === "routes") {
@@ -923,6 +984,8 @@ const History = () => {
         <tr>
           <th className="px-4 py-2">Date</th>
           <th className="px-4 py-2">Driver</th>
+          <th className="px-4 py-2">Van</th>
+          <th className="px-4 py-2">Equipment</th>
           <th className="px-4 py-2">Stops</th>
           <th className="px-4 py-2">Packages</th>
           <th className="px-4 py-2">Pace</th>
@@ -930,6 +993,18 @@ const History = () => {
           <th className="px-4 py-2">Last Stop</th>
           <th className="px-4 py-2">Sign Out</th>
           <th className="px-4 py-2">Target</th>
+          <th className="px-4 py-2">Note</th>
+        </tr>
+      );
+    } else if (viewMode === "rescues") {
+      return (
+        <tr>
+          <th className="px-4 py-2">Date</th>
+          <th className="px-4 py-2">Original Stops</th>
+          <th className="px-4 py-2">Rescued (+)</th>
+          <th className="px-4 py-2">Given (-)</th>
+          <th className="px-4 py-2">Final Total</th>
+          <th className="px-4 py-2">Rescue Details</th>
         </tr>
       );
     } else if (viewMode === "dates") {
@@ -950,6 +1025,8 @@ const History = () => {
         <tr>
           <th className="px-4 py-2">Driver</th>
           <th className="px-4 py-2">Route</th>
+          <th className="px-4 py-2">Van</th>
+          <th className="px-4 py-2">Equipment</th>
           <th className="px-4 py-2">Stops</th>
           <th className="px-4 py-2">Packages</th>
           <th className="px-4 py-2">Pace</th>
@@ -957,6 +1034,7 @@ const History = () => {
           <th className="px-4 py-2">Last Stop</th>
           <th className="px-4 py-2">Sign Out</th>
           <th className="px-4 py-2">Target</th>
+          <th className="px-4 py-2">Note</th>
         </tr>
       );
     }
@@ -1040,11 +1118,27 @@ const History = () => {
     return filteredHistory.map((record, index) => {
       const date = new Date(record.createdAt).toLocaleDateString();
 
+      // Helper to format equipment
+      const formatEquipment = (equipList) => {
+        if (!equipList || equipList.length === 0) return "-";
+        return equipList.map((e) => `${e.type} (${e.serialNumber})`).join(", ");
+      };
+
+      // Helper to format Van
+      const formatVan = (van, vin) => {
+        if (van) return van.vin; // Or van.licensePlate
+        return vin || "-";
+      };
+
       if (viewMode === "drivers") {
         return (
           <tr key={record._id} className="border-b">
             <td className="px-4 py-2">{date}</td>
             <td className="px-4 py-2">{record.routeCode}</td>
+            <td className="px-4 py-2">{formatVan(record.vanId, record.vin)}</td>
+            <td className="px-4 py-2 text-xs">
+              {formatEquipment(record.assignedEquipment)}
+            </td>
             <td className="px-4 py-2">
               {record.stopsComplete}/{record.allStops}
             </td>
@@ -1054,16 +1148,24 @@ const History = () => {
             <td className="px-4 py-2">{record.lastStopExecution}</td>
             <td className="px-4 py-2">{record.signOut}</td>
             <td className="px-4 py-2">{calculateTarget(record.signOut)}</td>
+            <td className="px-4 py-2 text-sm text-gray-600 italic">
+              {record.note}
+            </td>
           </tr>
         );
       } else if (viewMode === "routes") {
+        const name = record.driverName || record.driverId?.name;
         const drivers = record.driverNames
           ? record.driverNames.join(" | ")
-          : record.driverName;
+          : name;
         return (
           <tr key={record._id || index} className="border-b">
             <td className="px-4 py-2">{date}</td>
             <td className="px-4 py-2">{drivers}</td>
+            <td className="px-4 py-2">{formatVan(record.vanId, record.vin)}</td>
+            <td className="px-4 py-2 text-xs">
+              {formatEquipment(record.assignedEquipment)}
+            </td>
             <td className="px-4 py-2">
               {record.stopsComplete}/{record.allStops}
             </td>
@@ -1073,13 +1175,67 @@ const History = () => {
             <td className="px-4 py-2">{record.lastStopExecution}</td>
             <td className="px-4 py-2">{record.signOut}</td>
             <td className="px-4 py-2">{calculateTarget(record.signOut)}</td>
+            <td className="px-4 py-2 text-sm text-gray-600 italic">
+              {record.note}
+            </td>
+          </tr>
+        );
+      } else if (viewMode === "rescues") {
+        // Only show rows if there was rescue activity
+        if (!record.rescueStops && !record.rescuedStops) return null;
+
+        return (
+          <tr key={record._id} className="border-b">
+            <td className="px-4 py-2">{date}</td>
+            <td className="px-4 py-2">
+              {record.originalStops ||
+                record.allStops -
+                  (record.rescueStops || 0) +
+                  (record.rescuedStops || 0)}
+            </td>
+            <td className="px-4 py-2 text-green-600 font-bold">
+              {record.rescueStops > 0 ? `+${record.rescueStops}` : "-"}
+            </td>
+            <td className="px-4 py-2 text-red-600 font-bold">
+              {record.rescuedStops > 0 ? `-${record.rescuedStops}` : "-"}
+            </td>
+            <td className="px-4 py-2 font-bold">{record.allStops}</td>
+            <td className="px-4 py-2">
+              {record.rescueLog && record.rescueLog.length > 0 ? (
+                <ul className="text-sm">
+                  {record.rescueLog.map((log, i) => (
+                    <li
+                      key={i}
+                      className={
+                        log.type === "RECEIVED"
+                          ? "text-green-600"
+                          : "text-red-600"
+                      }
+                    >
+                      {log.type === "RECEIVED" ? "From" : "To"}{" "}
+                      {log.otherDriverName}:{" "}
+                      {log.type === "RECEIVED" ? "+" : "-"}
+                      {log.count}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                "-"
+              )}
+            </td>
           </tr>
         );
       } else if (viewMode === "dates") {
         return (
           <tr key={record._id} className="border-b">
-            <td className="px-4 py-2">{record.driverName}</td>
+            <td className="px-4 py-2">
+              {record.driverName || record.driverId?.name}
+            </td>
             <td className="px-4 py-2">{record.routeCode}</td>
+            <td className="px-4 py-2">{formatVan(record.vanId, record.vin)}</td>
+            <td className="px-4 py-2 text-xs">
+              {formatEquipment(record.assignedEquipment)}
+            </td>
             <td className="px-4 py-2">
               {record.stopsComplete}/{record.allStops}
             </td>
@@ -1089,6 +1245,9 @@ const History = () => {
             <td className="px-4 py-2">{record.lastStopExecution}</td>
             <td className="px-4 py-2">{record.signOut}</td>
             <td className="px-4 py-2">{calculateTarget(record.signOut)}</td>
+            <td className="px-4 py-2 text-sm text-gray-600 italic">
+              {record.note}
+            </td>
           </tr>
         );
       }
@@ -1172,7 +1331,10 @@ const History = () => {
     if (period === "AM" && hours === 12) hours = 0;
 
     // Deadline: 20:05 (8:05 PM)
-    const deadlineMinutes = 20 * 60 + 5;
+    const [targetHours, targetMinutes] = targetClockOutTime
+      .split(":")
+      .map(Number);
+    const deadlineMinutes = targetHours * 60 + targetMinutes;
     const currentMinutes = hours * 60 + minutes;
 
     if (currentMinutes > deadlineMinutes) {
@@ -1203,7 +1365,10 @@ const History = () => {
     if (period === "PM" && hours !== 12) hours += 12;
     if (period === "AM" && hours === 12) hours = 0;
 
-    const deadlineMinutes = 20 * 60 + 5;
+    const [targetHours, targetMinutes] = targetClockOutTime
+      .split(":")
+      .map(Number);
+    const deadlineMinutes = targetHours * 60 + targetMinutes;
     const currentMinutes = hours * 60 + minutes;
 
     // Positive for OT, Negative for Undertime
@@ -1365,6 +1530,7 @@ const History = () => {
             <option value="drivers">Drivers</option>
             <option value="routes">Route Code</option>
             <option value="dates">Date</option>
+            <option value="rescues">Rescues</option>
           </select>
         </div>
         <div className="max-h-[calc(100vh-200px)] overflow-y-auto">
@@ -1430,13 +1596,16 @@ const History = () => {
         {renderSummary()}
 
         {selectedItem &&
-          (viewMode === "drivers" || viewMode === "routes") &&
+          (viewMode === "drivers" ||
+            viewMode === "routes" ||
+            viewMode === "rescues") &&
           (timeRange === "week" || timeRange === "month") && (
             <MetricsGraph
               data={getFilteredHistory()}
               viewMode={viewMode}
               timeRange={timeRange}
               periodStart={currentPeriodStart}
+              targetClockOutTime={targetClockOutTime}
             />
           )}
 

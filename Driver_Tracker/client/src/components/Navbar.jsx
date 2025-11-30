@@ -5,6 +5,7 @@ const Navbar = () => {
   const navigate = useNavigate();
   const token = localStorage.getItem("token");
   const [isMetricsOpen, setIsMetricsOpen] = useState(false);
+  const [isInventoryOpen, setIsInventoryOpen] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -24,50 +25,46 @@ const Navbar = () => {
             Dashboard
           </Link>
 
+          {/* Metrics Dropdown */}
           <div className="relative">
             <button
-              onClick={() => setIsMetricsOpen(!isMetricsOpen)}
+              onClick={() => { setIsMetricsOpen(!isMetricsOpen); setIsInventoryOpen(false); }}
               className="hover:text-blue-200 flex items-center focus:outline-none"
             >
               Metrics
-              <svg
-                className="w-4 h-4 ml-1"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M19 9l-7 7-7-7"
-                />
+              <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
 
             {isMetricsOpen && (
               <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10">
-                <Link
-                  to="/import"
-                  className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
-                  onClick={() => setIsMetricsOpen(false)}
-                >
-                  Import
-                </Link>
-                <Link
-                  to="/history"
-                  className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
-                  onClick={() => setIsMetricsOpen(false)}
-                >
-                  History
-                </Link>
-                <Link
-                  to="/dispatch"
-                  className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
-                  onClick={() => setIsMetricsOpen(false)}
-                >
-                  Dispatch
-                </Link>
+                <Link to="/import" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsMetricsOpen(false)}>Import</Link>
+                <Link to="/history" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsMetricsOpen(false)}>History</Link>
+                <Link to="/dispatch" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsMetricsOpen(false)}>Dispatch</Link>
+                <Link to="/options" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsMetricsOpen(false)}>Options</Link>
+              </div>
+            )}
+          </div>
+
+          {/* Inventory Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => { setIsInventoryOpen(!isInventoryOpen); setIsMetricsOpen(false); }}
+              className="hover:text-blue-200 flex items-center focus:outline-none"
+            >
+              Inventory
+              <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {isInventoryOpen && (
+              <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10">
+                <Link to="/vans" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsInventoryOpen(false)}>Vans</Link>
+                <Link to="/equipment" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsInventoryOpen(false)}>Equipment</Link>
+                <Link to="/issues" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsInventoryOpen(false)}>Issue Log</Link>
+                <Link to="/profiles" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" onClick={() => setIsInventoryOpen(false)}>Driver Profiles</Link>
               </div>
             )}
           </div>

@@ -5,6 +5,11 @@ import Dashboard from "./pages/Dashboard";
 import ImportMetrics from "./pages/ImportMetrics";
 import History from "./pages/History";
 import Dispatch from "./pages/Dispatch";
+import Options from "./pages/Options";
+import Vans from "./pages/Vans";
+import Equipment from "./pages/Equipment";
+import IssueLog from "./pages/IssueLog";
+import DriverProfiles from "./pages/DriverProfiles";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navbar from "./components/Navbar";
 
@@ -46,6 +51,46 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Dispatch />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/options"
+              element={
+                <ProtectedRoute>
+                  <Options />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/vans"
+              element={
+                <ProtectedRoute>
+                  <Vans />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/equipment"
+              element={
+                <ProtectedRoute>
+                  <Equipment />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/issues"
+              element={
+                <ProtectedRoute>
+                  <IssueLog />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profiles"
+              element={
+                <ProtectedRoute>
+                  <DriverProfiles />
                 </ProtectedRoute>
               }
             />
