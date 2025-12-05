@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation } from "react-router-dom";
-import axios from "axios";
+import apiClient from "../lib/apiClient";
 
 const MetricsGraph = ({
   data,
@@ -546,22 +546,19 @@ const History = () => {
 
   const fetchListData = async () => {
     try {
-      const token = localStorage.getItem("token");
-      let url = "http://localhost:5000/api/drivers/list";
-      if (viewMode === "routes")
-        url = "http://localhost:5000/api/drivers/routes";
-      if (viewMode === "dates") url = "http://localhost:5000/api/drivers/dates";
+      let url = "/api/drivers/list";
+      if (viewMode === "routes") url = "/api/drivers/routes";
+      if (viewMode === "dates" || viewMode === "rescues")
+        url = "/api/drivers/dates";
 
-      const res = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const { data: responseData } = await apiClient.get(url);
 
-      let data = res.data;
-      if (viewMode === "drivers" || viewMode === "rescues") {
+      let data = responseData;
+      if (viewMode === "drivers") {
         data = data.sort((a, b) => a.driverName.localeCompare(b.driverName));
       }
 
-      if (viewMode === "dates") {
+      if (viewMode === "dates" || viewMode === "rescues") {
         setAvailableDates(data); // Store raw date strings
       } else {
         setListData(data);
@@ -574,19 +571,17 @@ const History = () => {
   // Helper to fetch summary data
   const fetchSummary = async (start, end) => {
     try {
-      const token = localStorage.getItem("token");
-      const res = await axios.get("http://localhost:5000/api/drivers/summary", {
+      const { data } = await apiClient.get("/api/drivers/summary", {
         params: { start: start.toISOString(), end: end.toISOString() },
-        headers: { Authorization: `Bearer ${token}` },
       });
-      setSummaryData(res.data);
+      setSummaryData(data);
     } catch (error) {
       console.error("Error fetching summary:", error);
     }
   };
 
   const handleItemClick = async (item) => {
-    if (viewMode === "dates") {
+    if (viewMode === "dates" || viewMode === "rescues") {
       // Handle Date Navigation
       // item is the clicked value (year number, month index, week string, or day string)
 
@@ -620,14 +615,10 @@ const History = () => {
         // item is the date string YYYY-MM-DD
         setSelectedItem(item); // For title
         try {
-          const token = localStorage.getItem("token");
-          const res = await axios.get(
-            `http://localhost:5000/api/drivers/date/${encodeURIComponent(
-              item
-            )}`,
-            { headers: { Authorization: `Bearer ${token}` } }
+          const { data } = await apiClient.get(
+            `/api/drivers/date/${encodeURIComponent(item)}`
           );
-          setHistory(res.data);
+          setHistory(data);
         } catch (error) {
           console.error(error);
         }
@@ -639,24 +630,17 @@ const History = () => {
 
     setSelectedItem(item);
     try {
-      const token = localStorage.getItem("token");
       let url = "";
-      if (viewMode === "drivers" || viewMode === "rescues")
-        url = `http://localhost:5000/api/drivers/${encodeURIComponent(
-          item.transporterId
-        )}`;
+      if (viewMode === "drivers")
+        url = `/api/drivers/${encodeURIComponent(item.transporterId)}`;
       if (viewMode === "routes")
-        url = `http://localhost:5000/api/drivers/route/${encodeURIComponent(
-          item
-        )}`;
+        url = `/api/drivers/route/${encodeURIComponent(item)}`;
 
-      const res = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const { data } = await apiClient.get(url);
 
       // Process data for Route view to group by date
       if (viewMode === "routes") {
-        const grouped = res.data.reduce((acc, curr) => {
+        const grouped = data.reduce((acc, curr) => {
           const date = new Date(curr.createdAt).toLocaleDateString();
           if (!acc[date]) {
             acc[date] = { ...curr, driverNames: [curr.driverName] };
@@ -688,14 +672,14 @@ const History = () => {
           );
         }
       } else {
-        setHistory(res.data);
+        setHistory(data);
 
         // Set initial period for drivers
         if (
           (viewMode === "drivers" || viewMode === "rescues") &&
-          res.data.length > 0
+          data.length > 0
         ) {
-          const dates = res.data.map((d) => new Date(d.createdAt));
+          const dates = data.map((d) => new Date(d.createdAt));
           const maxDate = new Date(Math.max.apply(null, dates));
           setCurrentPeriodStart(
             timeRange === "month"
@@ -749,7 +733,7 @@ const History = () => {
   };
 
   const renderList = () => {
-    if (viewMode === "dates") {
+    if (viewMode === "dates" || viewMode === "rescues") {
       // Date Navigation Logic
       let items = [];
       let onClick = () => {};
@@ -999,11 +983,8 @@ const History = () => {
     } else if (viewMode === "rescues") {
       return (
         <tr>
-          <th className="px-4 py-2">Date</th>
-          <th className="px-4 py-2">Original Stops</th>
-          <th className="px-4 py-2">Rescued (+)</th>
-          <th className="px-4 py-2">Given (-)</th>
-          <th className="px-4 py-2">Final Total</th>
+          <th className="px-4 py-2">Driver</th>
+          <th className="px-4 py-2">Rescue (+/-)</th>
           <th className="px-4 py-2">Rescue Details</th>
         </tr>
       );
@@ -1065,7 +1046,10 @@ const History = () => {
   };
 
   const renderTableRows = () => {
-    if (viewMode === "dates" && (dateNav.level !== "day" || !selectedItem)) {
+    if (
+      (viewMode === "dates" || viewMode === "rescues") &&
+      (dateNav.level !== "day" || !selectedItem)
+    ) {
       // Render Summary Rows
       if (summaryData.length === 0) {
         return (
@@ -1078,6 +1062,28 @@ const History = () => {
       }
 
       return summaryData.map((driver, index) => {
+        if (viewMode === "rescues") {
+          // Only show if there is rescue activity
+          if (!driver.totalRescueStops && !driver.totalRescuedStops)
+            return null;
+
+          const netRescue =
+            (driver.totalRescueStops || 0) - (driver.totalRescuedStops || 0);
+          const netRescueDisplay =
+            netRescue > 0 ? `+${netRescue}` : `${netRescue}`;
+          const netColor = netRescue > 0 ? "text-green-600" : "text-red-600";
+
+          return (
+            <tr key={index} className="border-b">
+              <td className="px-4 py-2 font-medium">{driver.driverName}</td>
+              <td className={`px-4 py-2 font-bold ${netColor}`}>
+                {netRescueDisplay}
+              </td>
+              <td className="px-4 py-2 text-gray-500 italic">-</td>
+            </tr>
+          );
+        }
+
         const netMinutes = driver.targetDiff || 0;
         const h = Math.floor(Math.abs(netMinutes) / 60);
         const m = netMinutes % 60;
@@ -1184,22 +1190,21 @@ const History = () => {
         // Only show rows if there was rescue activity
         if (!record.rescueStops && !record.rescuedStops) return null;
 
+        // Calculate net rescue count for display
+        const netRescue =
+          (record.rescueStops || 0) - (record.rescuedStops || 0);
+        const netRescueDisplay =
+          netRescue > 0 ? `+${netRescue}` : `${netRescue}`;
+        const netColor = netRescue > 0 ? "text-green-600" : "text-red-600";
+
         return (
           <tr key={record._id} className="border-b">
-            <td className="px-4 py-2">{date}</td>
             <td className="px-4 py-2">
-              {record.originalStops ||
-                record.allStops -
-                  (record.rescueStops || 0) +
-                  (record.rescuedStops || 0)}
+              {record.driverName || record.driverId?.name}
             </td>
-            <td className="px-4 py-2 text-green-600 font-bold">
-              {record.rescueStops > 0 ? `+${record.rescueStops}` : "-"}
+            <td className={`px-4 py-2 font-bold ${netColor}`}>
+              {netRescueDisplay}
             </td>
-            <td className="px-4 py-2 text-red-600 font-bold">
-              {record.rescuedStops > 0 ? `-${record.rescuedStops}` : "-"}
-            </td>
-            <td className="px-4 py-2 font-bold">{record.allStops}</td>
             <td className="px-4 py-2">
               {record.rescueLog && record.rescueLog.length > 0 ? (
                 <ul className="text-sm">
@@ -1255,7 +1260,7 @@ const History = () => {
   };
 
   const getTitle = () => {
-    if (viewMode === "dates") {
+    if (viewMode === "dates" || viewMode === "rescues") {
       if (dateNav.level === "year") return "Select a Year";
       if (dateNav.level === "month") return `Summary for ${dateNav.year}`;
       if (dateNav.level === "week") {
@@ -1289,6 +1294,7 @@ const History = () => {
     if (viewMode === "drivers") return `History for ${selectedItem.driverName}`;
     if (viewMode === "routes") return `History for ${selectedItem}`;
     if (viewMode === "dates") return `Metrics for ${selectedItem}`;
+    if (viewMode === "rescues") return `Metrics for ${selectedItem}`;
   };
 
   const handlePrevPeriod = () => {
@@ -1379,7 +1385,10 @@ const History = () => {
     let dataToSummarize = [];
     let isAggregated = false;
 
-    if (viewMode === "dates" && (dateNav.level !== "day" || !selectedItem)) {
+    if (
+      (viewMode === "dates" || viewMode === "rescues") &&
+      (dateNav.level !== "day" || !selectedItem)
+    ) {
       dataToSummarize = summaryData;
       isAggregated = true;
     } else {
@@ -1541,7 +1550,7 @@ const History = () => {
       <div className="w-3/4 bg-white p-4 rounded shadow">
         <h2 className="text-xl font-bold mb-4">{getTitle()}</h2>
 
-        {selectedItem && viewMode !== "dates" && (
+        {selectedItem && viewMode !== "dates" && viewMode !== "rescues" && (
           <div className="mb-4">
             <div className="flex gap-2 mb-2">
               {["week", "month", "all"].map((range) => (
@@ -1596,9 +1605,7 @@ const History = () => {
         {renderSummary()}
 
         {selectedItem &&
-          (viewMode === "drivers" ||
-            viewMode === "routes" ||
-            viewMode === "rescues") &&
+          (viewMode === "drivers" || viewMode === "routes") &&
           (timeRange === "week" || timeRange === "month") && (
             <MetricsGraph
               data={getFilteredHistory()}
@@ -1610,7 +1617,8 @@ const History = () => {
           )}
 
         {(selectedItem ||
-          (viewMode === "dates" && dateNav.level !== "year")) && (
+          ((viewMode === "dates" || viewMode === "rescues") &&
+            dateNav.level !== "year")) && (
           <div className="overflow-x-auto">
             <table className="min-w-full table-auto">
               <thead className="bg-gray-200">{renderTableHeaders()}</thead>

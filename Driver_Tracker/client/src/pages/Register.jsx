@@ -1,6 +1,7 @@
 import { useState } from "react";
-import axios from "axios";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import apiClient from "../lib/apiClient";
+import AuthForm from "../lib/AuthForm";
 
 const Register = () => {
   const [formData, setFormData] = useState({ username: "", password: "" });
@@ -9,7 +10,7 @@ const Register = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.post("http://localhost:5000/api/auth/register", formData);
+      await apiClient.post("/api/auth/register", formData);
       alert("Registration successful! Please login.");
       navigate("/login");
     } catch (error) {
@@ -21,40 +22,35 @@ const Register = () => {
     }
   };
 
+  const fields = [
+    {
+      name: "username",
+      type: "text",
+      placeholder: "Username",
+      value: formData.username,
+      onChange: (e) => setFormData({ ...formData, username: e.target.value }),
+      required: true,
+    },
+    {
+      name: "password",
+      type: "password",
+      placeholder: "Password",
+      value: formData.password,
+      onChange: (e) => setFormData({ ...formData, password: e.target.value }),
+      required: true,
+    },
+  ];
+
   return (
-    <div className="flex justify-center items-center h-screen">
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white p-8 rounded shadow-md w-96"
-      >
-        <h2 className="text-2xl mb-4 font-bold">Register</h2>
-        <input
-          type="text"
-          placeholder="Username"
-          className="w-full p-2 mb-4 border rounded"
-          onChange={(e) =>
-            setFormData({ ...formData, username: e.target.value })
-          }
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          className="w-full p-2 mb-4 border rounded"
-          onChange={(e) =>
-            setFormData({ ...formData, password: e.target.value })
-          }
-        />
-        <button className="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600">
-          Register
-        </button>
-        <p className="mt-4 text-center">
-          Already have an account?{" "}
-          <Link to="/login" className="text-blue-500">
-            Login
-          </Link>
-        </p>
-      </form>
-    </div>
+    <AuthForm
+      title="Register"
+      fields={fields}
+      submitLabel="Register"
+      onSubmit={handleSubmit}
+      footerText="Already have an account?"
+      footerLinkText="Login"
+      footerLinkTo="/login"
+    />
   );
 };
 

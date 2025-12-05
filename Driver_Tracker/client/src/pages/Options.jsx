@@ -1,43 +1,29 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import apiClient from "../lib/apiClient";
 
 const Options = () => {
-  const [timezone, setTimezone] = useState('UTC');
-  const [targetClockOutTime, setTargetClockOutTime] = useState('17:00');
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [timezone, setTimezone] = useState("UTC");
+  const [targetClockOutTime, setTargetClockOutTime] = useState("17:00");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     const fetchSettings = async () => {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem("token");
       if (!token) {
-        navigate('/login');
+        navigate("/login");
         return;
       }
 
       try {
-        const response = await fetch('http://localhost:5000/api/auth/settings', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        
-        if (response.status === 401) {
-          localStorage.removeItem('token');
-          navigate('/login');
-          return;
-        }
-
-        const data = await response.json();
-        if (response.ok) {
-          if (data.timezone) setTimezone(data.timezone);
-          if (data.targetClockOutTime) setTargetClockOutTime(data.targetClockOutTime);
-        } else {
-          setError('Failed to load settings');
-        }
+        const { data } = await apiClient.get("/api/auth/settings");
+        if (data.timezone) setTimezone(data.timezone);
+        if (data.targetClockOutTime)
+          setTargetClockOutTime(data.targetClockOutTime);
       } catch (err) {
-        setError('Error connecting to server');
+        setError("Error connecting to server");
       }
     };
 
@@ -46,41 +32,38 @@ const Options = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setMessage('');
-    setError('');
-    const token = localStorage.getItem('token');
-
+    setMessage("");
+    setError("");
     try {
-      const response = await fetch('http://localhost:5000/api/auth/settings', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ timezone, targetClockOutTime })
+      await apiClient.put("/api/auth/settings", {
+        timezone,
+        targetClockOutTime,
       });
-
-      const data = await response.json();
-      if (response.ok) {
-        setMessage('Settings updated successfully');
-      } else {
-        setError(data.message || 'Failed to update settings');
-      }
+      setMessage("Settings updated successfully");
     } catch (err) {
-      setError('Error connecting to server');
+      setError(err.response?.data?.message || "Failed to update settings");
     }
   };
 
   return (
     <div className="p-4 max-w-md mx-auto bg-white rounded shadow mt-10">
       <h2 className="text-2xl font-bold mb-6 text-center">Options</h2>
-      
-      {message && <div className="bg-green-100 text-green-700 p-3 rounded mb-4">{message}</div>}
-      {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>}
+
+      {message && (
+        <div className="bg-green-100 text-green-700 p-3 rounded mb-4">
+          {message}
+        </div>
+      )}
+      {error && (
+        <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>
+      )}
 
       <form onSubmit={handleSubmit}>
         <div className="mb-4">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="timezone">
+          <label
+            className="block text-gray-700 text-sm font-bold mb-2"
+            htmlFor="timezone"
+          >
             Time Zone
           </label>
           <select
@@ -99,7 +82,10 @@ const Options = () => {
         </div>
 
         <div className="mb-6">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="targetClockOutTime">
+          <label
+            className="block text-gray-700 text-sm font-bold mb-2"
+            htmlFor="targetClockOutTime"
+          >
             Target Clock Out Time (24h format)
           </label>
           <input

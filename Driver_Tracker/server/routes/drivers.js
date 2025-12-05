@@ -2,8 +2,6 @@ const express = require('express');
 const router = express.Router();
 const DriverMetric = require('../models/DriverMetric');
 const User = require('../models/User');
-const Van = require('../models/Van');
-const Driver = require('../models/Driver');
 const auth = require('../middleware/auth');
 
 // Save metrics
@@ -41,89 +39,19 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ message: 'No valid driver data found in file' });
     }
 
-    // 1. Auto-create/Update Drivers
-    const driverOps = validMetrics.map(m => ({
-      updateOne: {
-        filter: { transporterId: m["Transporter Id"] },
-        update: {
-          $set: { name: m["Driver name"] },
-          $setOnInsert: { createdAt: new Date() }
-        },
-        upsert: true
-      }
-    }));
-
-    // Deduplicate driver operations based on transporterId
-    const uniqueDriverOps = [];
-    const seenDrivers = new Set();
-    for (const op of driverOps) {
-      const tid = op.updateOne.filter.transporterId;
-      if (!seenDrivers.has(tid)) {
-        seenDrivers.add(tid);
-        uniqueDriverOps.push(op);
-      }
-    }
-
-    if (uniqueDriverOps.length > 0) {
-      await Driver.bulkWrite(uniqueDriverOps);
-    }
-
-    // Fetch all drivers to get IDs
-    const allDrivers = await Driver.find({}, 'transporterId _id');
-    const driverMap = new Map(allDrivers.map(d => [d.transporterId, d._id]));
-
-    // 2. Auto-create/Update Vans
-    const vanOps = [];
-    const seenVins = new Set();
-
-    validMetrics.forEach(m => {
-      const vin = m["cortex_vin_number"];
-      if (vin && !seenVins.has(vin)) {
-        seenVins.add(vin);
-        vanOps.push({
-          updateOne: {
-            filter: { vin: vin },
-            update: {
-              $setOnInsert: {
-                status: 'Active',
-                createdAt: new Date()
-              }
-            },
-            upsert: true
-          }
-        });
-      }
-    });
-
-    if (vanOps.length > 0) {
-      await Van.bulkWrite(vanOps);
-    }
-
-    // Fetch all vans to get IDs
-    const allVans = await Van.find({}, 'vin _id');
-    const vanMap = new Map(allVans.map(v => [v.vin, v._id]));
-
-    // 3. Save Metrics
     const operations = validMetrics.map(m => {
       const filter = {
         transporterId: m["Transporter Id"],
         createdAt: { $gte: queryStartDate, $lt: queryEndDate }
       };
 
-      const vin = m["cortex_vin_number"];
-      const vanId = vanMap.get(vin);
-      const driverId = driverMap.get(m["Transporter Id"]);
-
-      const isUnknownVin = !vin;
-
       const updateData = {
-        driverId: driverId,
+        driverName: m["Driver name"],
         routeCode: m["Route code"],
         progressStatus: m["Progress Status"],
         projectedRTS: m["Projected Return to Station"],
         deliveryServiceType: m["Delivery Service Type"],
-        vin: vin,
-        vanId: vanId,
+        vin: m["cortex_vin_number"],
         allStops: Number(m["All stops"]) || 0,
         stopsComplete: Number(m["Stops complete"]) || 0,
         notStartedStops: Number(m["not started stops"]) || 0,
@@ -138,11 +66,7 @@ router.post('/', auth, async (req, res) => {
           filter: filter,
           update: {
             $set: updateData,
-            $setOnInsert: {
-              createdAt: saveDate,
-              transporterId: m["Transporter Id"],
-              originalStops: Number(m["All stops"]) || 0
-            }
+            $setOnInsert: { createdAt: saveDate, transporterId: m["Transporter Id"] }
           },
           upsert: true
         }
@@ -167,28 +91,27 @@ router.get('/list', auth, async (req, res) => {
       {
         $group: {
           _id: "$transporterId",
-          lastUpdate: { $max: "$createdAt" },
-          driverId: { $first: "$driverId" }
+          driverName: { $first: "$driverName" },
+          lastUpdate: { $max: "$createdAt" }
         }
       },
       {
         $lookup: {
           from: "drivers",
-          localField: "driverId",
-          foreignField: "_id",
-          as: "driverInfo"
-        }
-      },
-      {
-        $unwind: {
-          path: "$driverInfo",
-          preserveNullAndEmptyArrays: true
+          localField: "_id",
+          foreignField: "transporterId",
+          as: "driverDetails"
         }
       },
       {
         $project: {
           transporterId: "$_id",
-          driverName: "$driverInfo.name",
+          driverName: {
+            $ifNull: [
+              "$driverName",
+              { $arrayElemAt: ["$driverDetails.name", 0] }
+            ]
+          },
           lastUpdate: 1,
           _id: 0
         }
@@ -243,16 +166,7 @@ router.get('/today', auth, async (req, res) => {
 
     const metrics = await DriverMetric.find({
       createdAt: { $gte: startOfToday, $lte: endOfToday }
-    })
-      .populate('driverId')
-      .populate('vanId');
-
-    // Sort by driver name
-    metrics.sort((a, b) => {
-      const nameA = a.driverId?.name || '';
-      const nameB = b.driverId?.name || '';
-      return nameA.localeCompare(nameB);
-    });
+    }).sort({ driverName: 1 });
 
     // Calculate start of the week (Sunday)
     const startOfWeek = new Date(startOfToday);
@@ -316,9 +230,8 @@ router.get('/route/:routeCode', auth, async (req, res) => {
   const { routeCode } = req.params;
   try {
     const history = await DriverMetric.find({ routeCode })
-      .sort({ createdAt: -1 })
-      .populate('driverId')
-      .populate('vanId');
+      .populate('driverId', 'name')
+      .sort({ createdAt: -1 });
     res.status(200).json(history);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching route history' });
@@ -336,14 +249,8 @@ router.get('/date/:date', auth, async (req, res) => {
     const history = await DriverMetric.find({
       createdAt: { $gte: startDate, $lt: endDate }
     })
-      .populate('driverId')
-      .populate('vanId');
-
-    history.sort((a, b) => {
-      const nameA = a.driverId?.name || '';
-      const nameB = b.driverId?.name || '';
-      return nameA.localeCompare(nameB);
-    });
+      .populate('driverId', 'name')
+      .sort({ driverName: 1 });
     res.status(200).json(history);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching date history' });
@@ -372,16 +279,6 @@ router.get('/summary', auth, async (req, res) => {
         }
       },
       {
-        $group: {
-          _id: "$transporterId",
-          driverId: { $first: "$driverId" },
-          totalStops: { $sum: "$stopsComplete" },
-          totalPackages: { $sum: "$totalPackages" },
-          avgPace: { $avg: "$avgPace" },
-          records: { $push: { signOut: "$signOut" } }
-        }
-      },
-      {
         $lookup: {
           from: "drivers",
           localField: "driverId",
@@ -396,12 +293,31 @@ router.get('/summary', auth, async (req, res) => {
         }
       },
       {
+        $group: {
+          _id: "$transporterId",
+          driverName: { $first: "$driverName" },
+          driverInfoName: { $first: "$driverInfo.name" },
+          totalStops: { $sum: "$stopsComplete" },
+          totalPackages: { $sum: "$totalPackages" },
+          avgPace: { $avg: "$avgPace" },
+          totalRescueStops: { $sum: "$rescueStops" },
+          totalRescuedStops: { $sum: "$rescuedStops" },
+          totalOriginalStops: { $sum: "$originalStops" },
+          totalAllStops: { $sum: "$allStops" },
+          records: { $push: { signOut: "$signOut" } }
+        }
+      },
+      {
         $project: {
           transporterId: "$_id",
-          driverName: "$driverInfo.name",
+          driverName: { $ifNull: ["$driverName", "$driverInfoName"] },
           totalStops: 1,
           totalPackages: 1,
           avgPace: 1,
+          totalRescueStops: 1,
+          totalRescuedStops: 1,
+          totalOriginalStops: 1,
+          totalAllStops: 1,
           records: 1,
           _id: 0
         }
@@ -448,10 +364,8 @@ router.get('/:transporterId', auth, async (req, res) => {
   const { transporterId } = req.params;
   try {
     const history = await DriverMetric.find({ transporterId })
-      .sort({ createdAt: -1 })
-      .populate('vanId')
-      .populate('assignedEquipment')
-      .populate('driverId');
+      .populate('driverId', 'name')
+      .sort({ createdAt: -1 });
     res.status(200).json(history);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching history' });
@@ -462,6 +376,7 @@ router.get('/:transporterId', auth, async (req, res) => {
 router.patch('/:id/note', auth, async (req, res) => {
   const { id } = req.params;
   const { note } = req.body;
+
   try {
     const updatedMetric = await DriverMetric.findByIdAndUpdate(
       id,
@@ -480,49 +395,54 @@ router.patch('/:id/note', auth, async (req, res) => {
   }
 });
 
-// Perform a rescue (transfer stops)
+// Process a rescue
 router.post('/rescue', auth, async (req, res) => {
   const { rescuerId, rescueeId, stopCount } = req.body;
+  const count = parseInt(stopCount);
 
-  if (!rescuerId || !rescueeId || !stopCount || stopCount <= 0) {
-    return res.status(400).json({ message: 'Invalid rescue parameters' });
+  if (!rescuerId || !rescueeId || !count || count <= 0) {
+    return res.status(400).json({ message: 'Invalid rescue data' });
   }
 
   try {
-    // Find both driver metrics
-    const rescuer = await DriverMetric.findById(rescuerId).populate('driverId');
-    const rescuee = await DriverMetric.findById(rescueeId).populate('driverId');
+    const rescuer = await DriverMetric.findById(rescuerId);
+    const rescuee = await DriverMetric.findById(rescueeId);
 
     if (!rescuer || !rescuee) {
-      return res.status(404).json({ message: 'One or both drivers not found' });
+      return res.status(404).json({ message: 'Driver not found' });
     }
 
-    // Update Rescuee (Giver)
-    rescuee.rescuedStops = (rescuee.rescuedStops || 0) + Number(stopCount);
-    rescuee.allStops = (rescuee.allStops || 0) - Number(stopCount);
-    rescuee.rescueLog.push({
+    // Initialize originalStops if not set
+    if (!rescuer.originalStops) rescuer.originalStops = rescuer.allStops;
+    if (!rescuee.originalStops) rescuee.originalStops = rescuee.allStops;
+
+    // Update Rescuer (Giver)
+    rescuer.rescueStops = (rescuer.rescueStops || 0) + count;
+    rescuer.allStops = (rescuer.allStops || 0) + count;
+    rescuer.rescueLog.push({
       type: 'GAVE',
-      count: Number(stopCount),
-      otherDriverName: rescuer.driverId ? rescuer.driverId.name : 'Unknown',
+      count: count,
+      otherDriverName: rescuee.driverName || 'Unknown',
       timestamp: new Date()
     });
+
+    // Update Rescuee (Receiver)
+    rescuee.rescuedStops = (rescuee.rescuedStops || 0) + count;
+    rescuee.allStops = (rescuee.allStops || 0) - count;
+    rescuee.rescueLog.push({
+      type: 'RECEIVED',
+      count: count,
+      otherDriverName: rescuer.driverName || 'Unknown',
+      timestamp: new Date()
+    });
+
+    await rescuer.save();
     await rescuee.save();
 
-    // Update Rescuer (Receiver)
-    rescuer.rescueStops = (rescuer.rescueStops || 0) + Number(stopCount);
-    rescuer.allStops = (rescuer.allStops || 0) + Number(stopCount);
-    rescuer.rescueLog.push({
-      type: 'RECEIVED',
-      count: Number(stopCount),
-      otherDriverName: rescuee.driverId ? rescuee.driverId.name : 'Unknown',
-      timestamp: new Date()
-    });
-    await rescuer.save();
-
-    res.status(200).json({ message: 'Rescue processed successfully', rescuer, rescuee });
+    res.status(200).json({ message: 'Rescue processed successfully' });
   } catch (error) {
     console.error("Error processing rescue:", error);
-    res.status(500).json({ message: 'Error processing rescue', error: error.message });
+    res.status(500).json({ message: 'Error processing rescue' });
   }
 });
 

@@ -1,6 +1,7 @@
 import { useState } from "react";
-import axios from "axios";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import apiClient from "../lib/apiClient";
+import AuthForm from "../lib/AuthForm";
 
 const Login = () => {
   const [formData, setFormData] = useState({ username: "", password: "" });
@@ -9,10 +10,7 @@ const Login = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post(
-        "http://localhost:5000/api/auth/login",
-        formData
-      );
+      const res = await apiClient.post("/api/auth/login", formData);
       localStorage.setItem("token", res.data.token);
       navigate("/");
     } catch (error) {
@@ -22,40 +20,35 @@ const Login = () => {
     }
   };
 
+  const fields = [
+    {
+      name: "username",
+      type: "text",
+      placeholder: "Username",
+      value: formData.username,
+      onChange: (e) => setFormData({ ...formData, username: e.target.value }),
+      required: true,
+    },
+    {
+      name: "password",
+      type: "password",
+      placeholder: "Password",
+      value: formData.password,
+      onChange: (e) => setFormData({ ...formData, password: e.target.value }),
+      required: true,
+    },
+  ];
+
   return (
-    <div className="flex justify-center items-center h-screen">
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white p-8 rounded shadow-md w-96"
-      >
-        <h2 className="text-2xl mb-4 font-bold">Login</h2>
-        <input
-          type="text"
-          placeholder="Username"
-          className="w-full p-2 mb-4 border rounded"
-          onChange={(e) =>
-            setFormData({ ...formData, username: e.target.value })
-          }
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          className="w-full p-2 mb-4 border rounded"
-          onChange={(e) =>
-            setFormData({ ...formData, password: e.target.value })
-          }
-        />
-        <button className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600">
-          Login
-        </button>
-        <p className="mt-4 text-center">
-          Don't have an account?{" "}
-          <Link to="/register" className="text-blue-500">
-            Register
-          </Link>
-        </p>
-      </form>
-    </div>
+    <AuthForm
+      title="Login"
+      fields={fields}
+      submitLabel="Login"
+      onSubmit={handleSubmit}
+      footerText="Don't have an account?"
+      footerLinkText="Register"
+      footerLinkTo="/register"
+    />
   );
 };
 

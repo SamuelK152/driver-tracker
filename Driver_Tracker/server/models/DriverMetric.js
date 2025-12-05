@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const DriverMetricSchema = new mongoose.Schema({
   transporterId: { type: String, required: true },
+  driverName: String,
   driverId: { type: mongoose.Schema.Types.ObjectId, ref: 'Driver' },
   routeCode: String,
   progressStatus: String,

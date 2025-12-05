@@ -1,6 +1,12 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
-import axios from "axios";
+import apiClient from "../lib/apiClient";
+import {
+  collectClaimedRoutes,
+  normalizeRouteCode,
+  validateRouteCodes,
+} from "@shared/routeCodes";
+import { findInvalidTimeFields } from "@shared/time";
 
 const DISPLAY_FIELDS = [
   "Transporter Id",
@@ -33,44 +39,12 @@ const ImportMetrics = () => {
   });
 
   const validateData = (processedData) => {
-    const newErrors = [];
-    // Regex for "H:MM" or "H:MM AM/PM" or "H:MM:SS"
-    const timeRegex = /^\d{1,2}:\d{2}(?::\d{2})?\s*(AM|PM)?$/i;
-
-    processedData.forEach((row, index) => {
-      const fields = ["App sign out:", "cortex_last_stop_execution_time"];
-      fields.forEach((field) => {
-        const val = row[field];
-        // Only validate if it's a string and not empty/placeholder
-        if (val && typeof val === "string" && val !== "-") {
-          // Check if it fails the time regex
-          if (!timeRegex.test(val.trim())) {
-            newErrors.push({
-              rowIndex: index,
-              field,
-              driverName: row["Driver name"],
-            });
-          }
-        }
-      });
-    });
-
-    // Route code validation
-    processedData.forEach((row, index) => {
-      const routeCode = row["Route code"];
-      if (
-        routeCode &&
-        typeof routeCode === "string" &&
-        routeCode.includes("|")
-      ) {
-        newErrors.push({
-          rowIndex: index,
-          field: "Route code",
-          driverName: row["Driver name"],
-        });
-      }
-    });
-
+    const timeErrors = findInvalidTimeFields(processedData, [
+      "App sign out:",
+      "cortex_last_stop_execution_time",
+    ]);
+    const routeErrors = validateRouteCodes(processedData);
+    const newErrors = [...timeErrors, ...routeErrors];
     setErrors(newErrors);
     return newErrors.length === 0;
   };
@@ -95,40 +69,14 @@ const ImportMetrics = () => {
       const ws = wb.Sheets[wsname];
       const jsonData = XLSX.utils.sheet_to_json(ws);
 
-      // Identify claimed routes (single routes assigned to drivers)
-      const claimedRoutes = new Set();
-      jsonData.forEach((row) => {
-        const routeCode = row["Route code"];
-        if (
-          routeCode &&
-          typeof routeCode === "string" &&
-          !routeCode.includes("|")
-        ) {
-          claimedRoutes.add(routeCode.trim());
-        }
-      });
+      const claimedRoutes = collectClaimedRoutes(jsonData, "Route code");
 
-      // Process drivers with multiple routes
       const processedData = jsonData.map((row) => {
-        const routeCode = row["Route code"];
-        if (
-          routeCode &&
-          typeof routeCode === "string" &&
-          routeCode.includes("|")
-        ) {
-          const codes = routeCode.split("|").map((c) => c.trim());
-          // Filter out codes that are claimed by other drivers
-          const remainingCodes = codes.filter(
-            (code) => !claimedRoutes.has(code)
-          );
-
-          if (remainingCodes.length === 0) {
-            return { ...row, "Route code": "RESCUE" };
-          } else {
-            return { ...row, "Route code": remainingCodes.join("|") };
-          }
-        }
-        return row;
+        const updatedRoute = normalizeRouteCode(
+          row["Route code"],
+          claimedRoutes
+        );
+        return updatedRoute ? { ...row, "Route code": updatedRoute } : row;
       });
 
       setData(processedData);
@@ -139,17 +87,10 @@ const ImportMetrics = () => {
 
   const handleSave = async () => {
     try {
-      const token = localStorage.getItem("token");
-      const res = await axios.post(
-        "http://localhost:5000/api/drivers",
-        {
-          metrics: data,
-          date: selectedDate,
-        },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+      const res = await apiClient.post("/api/drivers", {
+        metrics: data,
+        date: selectedDate,
+      });
 
       const saved = res.data.count || 0;
       const skipped = res.data.skipped || 0;

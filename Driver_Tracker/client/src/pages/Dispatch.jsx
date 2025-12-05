@@ -1,7 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import axios from "axios";
 import { read, utils } from "xlsx";
+import apiClient from "../lib/apiClient";
+import {
+  collectClaimedRoutes,
+  normalizeRouteCode,
+  validateRouteCodes,
+} from "@shared/routeCodes";
 
 const Dispatch = () => {
   const [driverData, setDriverData] = useState([]);
@@ -53,18 +58,11 @@ const Dispatch = () => {
     }
 
     try {
-      const token = localStorage.getItem("token");
-      await axios.post(
-        "http://localhost:5000/api/drivers/rescue",
-        {
-          rescuerId: currentRescuer._id,
-          rescueeId: selectedRescueeId,
-          stopCount: rescueStopCount,
-        },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+      await apiClient.post("/api/drivers/rescue", {
+        rescuerId: currentRescuer._id,
+        rescueeId: selectedRescueeId,
+        stopCount: rescueStopCount,
+      });
       setIsRescueModalOpen(false);
       fetchData(); // Refresh data
     } catch (err) {
@@ -76,10 +74,7 @@ const Dispatch = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem("token");
-      const res = await axios.get("http://localhost:5000/api/drivers/today", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiClient.get("/api/drivers/today");
       setDriverData(res.data);
       setError(null);
     } catch (err) {
@@ -95,30 +90,14 @@ const Dispatch = () => {
   }, []);
 
   const validateData = (processedData) => {
-    const newErrors = [];
-
-    // Route code validation
-    const keys = Object.keys(processedData[0] || {});
     const routeCodeKey =
-      keys.find((k) => k.toLowerCase() === "route code") || "Route Code";
+      Object.keys(processedData[0] || {}).find(
+        (k) => k.toLowerCase() === "route code"
+      ) || "Route Code";
 
-    processedData.forEach((row, index) => {
-      const routeCode = row[routeCodeKey];
-      if (
-        routeCode &&
-        typeof routeCode === "string" &&
-        routeCode.includes("|")
-      ) {
-        newErrors.push({
-          rowIndex: index,
-          field: routeCodeKey,
-          driverName: row["Driver name"] || row["Driver Name"] || "Unknown",
-        });
-      }
-    });
-
-    setValidationErrors(newErrors);
-    return newErrors.length === 0;
+    const errors = validateRouteCodes(processedData, routeCodeKey);
+    setValidationErrors(errors);
+    return errors.length === 0;
   };
 
   const handleCorrection = (rowIndex, field, newValue) => {
@@ -129,20 +108,16 @@ const Dispatch = () => {
 
   const uploadData = async (dataToUpload) => {
     try {
-      const token = localStorage.getItem("token");
       const today = new Date();
       const year = today.getFullYear();
       const month = String(today.getMonth() + 1).padStart(2, "0");
       const day = String(today.getDate()).padStart(2, "0");
       const localDate = `${year}-${month}-${day}`;
 
-      await axios.post(
-        "http://localhost:5000/api/drivers",
-        { metrics: dataToUpload, date: localDate },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+      await apiClient.post("/api/drivers", {
+        metrics: dataToUpload,
+        date: localDate,
+      });
 
       setPendingData([]);
       setValidationErrors([]);
@@ -176,44 +151,19 @@ const Dispatch = () => {
           return;
         }
 
-        const keys = Object.keys(jsonData[0] || {});
         const routeCodeKey =
-          keys.find((k) => k.toLowerCase() === "route code") || "Route Code";
+          Object.keys(jsonData[0] || {}).find(
+            (k) => k.toLowerCase() === "route code"
+          ) || "Route Code";
 
-        // Identify claimed routes (single routes assigned to drivers)
-        const claimedRoutes = new Set();
-        jsonData.forEach((row) => {
-          const routeCode = row[routeCodeKey];
-          if (
-            routeCode &&
-            typeof routeCode === "string" &&
-            !routeCode.includes("|")
-          ) {
-            claimedRoutes.add(routeCode.trim());
-          }
-        });
+        const claimedRoutes = collectClaimedRoutes(jsonData, routeCodeKey);
 
-        // Process drivers with multiple routes
         const processedData = jsonData.map((row) => {
-          const routeCode = row[routeCodeKey];
-          if (
-            routeCode &&
-            typeof routeCode === "string" &&
-            routeCode.includes("|")
-          ) {
-            const codes = routeCode.split("|").map((c) => c.trim());
-            // Filter out codes that are claimed by other drivers
-            const remainingCodes = codes.filter(
-              (code) => !claimedRoutes.has(code)
-            );
-
-            if (remainingCodes.length === 0) {
-              return { ...row, [routeCodeKey]: "RESCUE" };
-            } else {
-              return { ...row, [routeCodeKey]: remainingCodes.join("|") };
-            }
-          }
-          return row;
+          const updatedRoute = normalizeRouteCode(
+            row[routeCodeKey],
+            claimedRoutes
+          );
+          return updatedRoute ? { ...row, [routeCodeKey]: updatedRoute } : row;
         });
 
         setPendingData(processedData);
@@ -410,14 +360,9 @@ const Dispatch = () => {
     if (!currentNoteDriver) return;
 
     try {
-      const token = localStorage.getItem("token");
-      await axios.patch(
-        `http://localhost:5000/api/drivers/${currentNoteDriver._id}/note`,
-        { note: noteText },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+      await apiClient.patch(`/api/drivers/${currentNoteDriver._id}/note`, {
+        note: noteText,
+      });
 
       // Update local state
       setDriverData((prevData) =>
@@ -707,8 +652,7 @@ const Dispatch = () => {
                         >
                           {driver.rescueStops > 0
                             ? `+${driver.rescueStops}`
-                            : `-${driver.rescuedStops}`}{" "}
-                          ({driver.allStops})
+                            : `-${driver.rescuedStops}`}
                         </span>
                       </>
                     )}
