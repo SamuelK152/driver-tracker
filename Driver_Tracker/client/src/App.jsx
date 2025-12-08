@@ -8,7 +8,7 @@ import Dispatch from "./pages/Dispatch";
 import Vans from "./pages/Vans";
 import Equipment from "./pages/Equipment";
 import DriverProfiles from "./pages/DriverProfiles";
-import IssueLog from "./pages/IssueLog";
+import MaintenanceLog from "./pages/MaintenanceLog";
 import Options from "./pages/Options";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navbar from "./components/Navbar";
@@ -79,10 +79,10 @@ function App() {
               }
             />
             <Route
-              path="/issueLog"
+              path="/maintenance"
               element={
                 <ProtectedRoute>
-                  <IssueLog />
+                  <MaintenanceLog />
                 </ProtectedRoute>
               }
             />

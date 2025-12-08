@@ -114,11 +114,11 @@ const Navbar = () => {
                   Drivers
                 </Link>
                 <Link
-                  to="/issueLog"
+                  to="/maintenance"
                   className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
                   onClick={() => setIsFleetOpen(false)}
                 >
-                  Issue Log
+                  Maintenance Log
                 </Link>
               </div>
             )}
@@ -168,11 +168,11 @@ const Navbar = () => {
                   Drivers
                 </Link>
                 <Link
-                  to="/issueLog"
+                  to="/maintenance"
                   className="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium"
                   onClick={() => setIsManagerOpen(false)}
                 >
-                  Issue Log
+                  Maintenance Log
                 </Link>
                 <Link
                   to="/options"

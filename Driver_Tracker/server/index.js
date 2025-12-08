@@ -21,7 +21,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/drivers', require('./routes/drivers'));
 app.use('/api/vans', require('./routes/vans'));
 app.use('/api/equipment', require('./routes/equipment'));
-app.use('/api/issues', require('./routes/issues'));
+app.use('/api/maintenance', require('./routes/maintenance'));
 app.use('/api/driver-profiles', require('./routes/driverProfiles'));
 app.use('/api/assignments', require('./routes/assignments'));
 

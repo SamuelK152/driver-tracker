@@ -1,11 +1,13 @@
 const mongoose = require('mongoose');
 
 const VanSchema = new mongoose.Schema({
+  vanId: { type: String, required: true, unique: true },
   vin: { type: String, required: true, unique: true },
   make: String,
   model: String,
   year: Number,
   licensePlate: String,
+  serviceType: { type: String, default: 'Unlisted' },
   status: {
     type: String,
     enum: ['Active', 'Maintenance', 'Retired'],

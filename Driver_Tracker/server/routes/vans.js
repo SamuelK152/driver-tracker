@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const Van = require('../models/Van');
-const Issue = require('../models/Issue');
+const Maintenance = require('../models/Maintenance');
 const auth = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 
 // Get all vans
 router.get('/', auth, asyncHandler(async (req, res) => {
-  const vans = await Van.find().sort({ vin: 1 });
+  const vans = await Van.find().sort({ vanId: 1, vin: 1 });
   res.status(200).json(vans);
 }));
 
@@ -31,10 +31,10 @@ router.delete('/:id', auth, asyncHandler(async (req, res) => {
   res.status(200).json({ message: 'Van deleted' });
 }));
 
-// Get issues for a specific van
-router.get('/:id/issues', auth, asyncHandler(async (req, res) => {
-  const issues = await Issue.find({ relatedType: 'Van', relatedId: req.params.id }).sort({ reportedAt: -1 });
-  res.status(200).json(issues);
+// Get maintenance records for a specific van
+router.get('/:id/maintenance', auth, asyncHandler(async (req, res) => {
+  const maintenance = await Maintenance.find({ relatedType: 'Van', relatedId: String(req.params.id) }).sort({ reportedAt: -1 });
+  res.status(200).json(maintenance);
 }));
 
 module.exports = router;

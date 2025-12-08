@@ -1,12 +1,15 @@
 const mongoose = require('mongoose');
 
 const EquipmentSchema = new mongoose.Schema({
-  type: {
+  type: { type: String, required: true },
+  serialNumber: {
     type: String,
-    required: true,
-    enum: ['Phone', 'Gas Card', 'Dolly', 'Other']
+    required: function () {
+      return this.type !== 'Gas Card';
+    }
   },
-  serialNumber: { type: String, required: true, unique: true },
+  phoneNumber: String,
+  van: { type: mongoose.Schema.Types.ObjectId, ref: 'Van', default: null },
   status: {
     type: String,
     enum: ['Available', 'In Use', 'Missing', 'Broken'],

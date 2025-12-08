@@ -6,7 +6,9 @@ const asyncHandler = require('../utils/asyncHandler');
 
 // Get all driver profiles
 router.get('/', auth, asyncHandler(async (req, res) => {
-  const drivers = await Driver.find().populate('preferredEquipment');
+  const drivers = await Driver.find()
+    .populate('preferredEquipment')
+    .populate('preferredVans');
   res.status(200).json(drivers);
 }));
 
