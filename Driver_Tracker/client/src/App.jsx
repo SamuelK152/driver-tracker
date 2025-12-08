@@ -8,6 +8,7 @@ import Dispatch from "./pages/Dispatch";
 import Vans from "./pages/Vans";
 import Equipment from "./pages/Equipment";
 import DriverProfiles from "./pages/DriverProfiles";
+import Scheduling from "./pages/Scheduling";
 import MaintenanceLog from "./pages/MaintenanceLog";
 import Options from "./pages/Options";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -75,6 +76,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <DriverProfiles />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/scheduling"
+              element={
+                <ProtectedRoute>
+                  <Scheduling />
                 </ProtectedRoute>
               }
             />
