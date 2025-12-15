@@ -24,6 +24,8 @@ app.use('/api/equipment', require('./routes/equipment'));
 app.use('/api/maintenance', require('./routes/maintenance'));
 app.use('/api/driver-profiles', require('./routes/driverProfiles'));
 app.use('/api/assignments', require('./routes/assignments'));
+app.use('/api/schedules', require('./routes/schedules'));
+app.use('/api/config', require('./routes/config'));
 
 // Centralized error handler
 app.use(errorHandler);

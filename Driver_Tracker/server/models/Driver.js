@@ -7,6 +7,7 @@ const DriverSchema = new mongoose.Schema({
   preferredVans: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Van' }],
   preferredServiceTypes: [{ type: String }],
   training: [{ type: String }],
+  priority: { type: Number, default: 999 },
   schedule: {
     type: {
       type: String,

@@ -218,6 +218,14 @@ const Navigation = () => {
                     >
                       Calendar
                     </Link>
+                    <Link
+                      to="/scheduling/manage"
+                      className={`block px-4 py-2 rounded hover:bg-gray-700 text-sm whitespace-nowrap ${
+                        isActive("/scheduling/manage") ? "bg-gray-700" : ""
+                      }`}
+                    >
+                      Manage
+                    </Link>
                   </div>
                 )}
               </div>

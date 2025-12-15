@@ -1,441 +1,651 @@
-import React, { useState, useEffect } from "react";
-import apiClient from "../lib/apiClient";
+import React, { useState, useEffect, useMemo } from "react";
+import { useApi } from "../lib/useApi";
+import PageShell from "../lib/PageShell";
 
-const Scheduling = () => {
-  const [drivers, setDrivers] = useState([]);
-  const [selectedDriverId, setSelectedDriverId] = useState(null);
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [selectedDateDetails, setSelectedDateDetails] = useState(null);
-
-  // Selected Driver Local State (for editing)
-  const [scheduleDays, setScheduleDays] = useState([]);
-  const [manualDates, setManualDates] = useState([]);
-  const [excludedDates, setExcludedDates] = useState([]);
-
-  const daysOfWeek = [
+// --- Date Helpers ---
+const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+const formatDate = (date) => date.toISOString().split("T")[0];
+const getDayName = (date) =>
+  [
+    "Sunday",
     "Monday",
     "Tuesday",
     "Wednesday",
     "Thursday",
     "Friday",
     "Saturday",
-    "Sunday",
-  ];
+  ][date.getDay()];
 
+// --- Modal Component ---
+const DayDetailsModal = ({
+  date,
+  onClose,
+  drivers,
+  vans,
+  equipment,
+  schedule,
+  onSave,
+  customPositions,
+}) => {
+  const [activeTab, setActiveTab] = useState("roster");
+  const [roster, setRoster] = useState([]);
+  const [requirements, setRequirements] = useState({});
+  const [assignments, setAssignments] = useState([]);
+
+  // Initialize state based on schedule or defaults
   useEffect(() => {
-    fetchDrivers();
-  }, []);
+    if (!drivers.length) return;
 
-  // Sync local state when selected driver changes
-  useEffect(() => {
-    if (selectedDriverId) {
-      const driver = drivers.find((d) => d._id === selectedDriverId);
-      if (driver) {
-        setScheduleDays(driver.schedule?.days || []);
-        setManualDates(
-          (driver.schedule?.manualDates || []).map((d) => new Date(d))
-        );
-        setExcludedDates(
-          (driver.schedule?.excludedDates || []).map((d) => new Date(d))
-        );
-      }
-    }
-  }, [selectedDriverId, drivers]);
+    const dayName = getDayName(date);
 
-  const fetchDrivers = async () => {
-    try {
-      const res = await apiClient.get("/api/driver-profiles");
-      setDrivers(res.data);
-      setLoading(false);
-    } catch (error) {
-      console.error("Error fetching drivers", error);
-      setLoading(false);
-    }
-  };
-
-  const isSameDay = (d1, d2) => {
-    return (
-      d1.getFullYear() === d2.getFullYear() &&
-      d1.getMonth() === d2.getMonth() &&
-      d1.getDate() === d2.getDate()
-    );
-  };
-
-  // Check if a specific driver object is working on a date
-  const checkDriverSchedule = (driver, date) => {
-    if (!driver.schedule) return false;
-    const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
-
-    // Parse dates from driver object (strings from JSON)
-    const mDates = (driver.schedule.manualDates || []).map((d) => new Date(d));
-    const eDates = (driver.schedule.excludedDates || []).map(
-      (d) => new Date(d)
-    );
-    const days = driver.schedule.days || [];
-
-    const isManual = mDates.some((d) => isSameDay(d, date));
-    const isExcluded = eDates.some((d) => isSameDay(d, date));
-    const isPreset = days.includes(dayName);
-
-    if (isManual) return true;
-    if (isExcluded) return false;
-    return isPreset;
-  };
-
-  // Check local state (for the driver currently being edited)
-  const isSelectedDriverWorking = (date) => {
-    const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
-    const isPreset = scheduleDays.includes(dayName);
-    const isManual = manualDates.some((d) => isSameDay(d, date));
-    const isExcluded = excludedDates.some((d) => isSameDay(d, date));
-
-    if (isManual) return true;
-    if (isExcluded) return false;
-    return isPreset;
-  };
-
-  const handleDayClick = (date) => {
-    if (!selectedDriverId) return;
-
-    const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
-    const isPreset = scheduleDays.includes(dayName);
-    const isManual = manualDates.some((d) => isSameDay(d, date));
-    const isExcluded = excludedDates.some((d) => isSameDay(d, date));
-
-    if (isSelectedDriverWorking(date)) {
-      // Turn OFF
-      if (isManual) {
-        setManualDates(manualDates.filter((d) => !isSameDay(d, date)));
-      } else if (isPreset && !isExcluded) {
-        setExcludedDates([...excludedDates, date]);
-      }
+    if (schedule) {
+      // Existing schedule: Merge drivers with schedule roster
+      const initialRoster = drivers.map((d) => {
+        const scheduled = schedule.roster.find((r) => {
+          const rId = r.driverId?._id || r.driverId;
+          return rId === d._id;
+        });
+        return {
+          driverId: d._id,
+          name: d.name,
+          priority: d.priority,
+          isWorking: !!scheduled,
+          position: scheduled?.position || "Driver",
+        };
+      });
+      setRoster(initialRoster);
+      setRequirements(schedule.requirements || {});
+      setAssignments(schedule.assignments || []);
     } else {
-      // Turn ON
-      if (isExcluded) {
-        setExcludedDates(excludedDates.filter((d) => !isSameDay(d, date)));
-      } else if (!isPreset) {
-        setManualDates([...manualDates, date]);
-      }
+      // New schedule: Use recurring schedule from Driver model
+      const initialRoster = drivers.map((d) => {
+        const isWorking = d.schedule?.days?.includes(dayName);
+        return {
+          driverId: d._id,
+          name: d.name,
+          priority: d.priority,
+          isWorking: !!isWorking,
+          position: "Driver",
+        };
+      });
+      setRoster(initialRoster);
+      setRequirements({});
+      setAssignments([]);
     }
+  }, [date, drivers, schedule]);
+
+  const handleSave = () => {
+    const payload = {
+      date: date,
+      roster: roster
+        .filter((r) => r.isWorking)
+        .map(({ driverId, position }) => ({ driverId, position })),
+      requirements,
+      assignments,
+    };
+    onSave(payload);
   };
 
-  const handlePresetChange = (day) => {
-    if (scheduleDays.includes(day)) {
-      setScheduleDays(scheduleDays.filter((d) => d !== day));
-    } else {
-      setScheduleDays([...scheduleDays, day]);
-    }
-  };
+  const handleAutoAssign = () => {
+    // 1. Get working drivers and sort by priority
+    let workingDrivers = roster
+      .filter((r) => r.isWorking)
+      .map((r) => {
+        const fullDriver = drivers.find((d) => d._id === r.driverId);
+        return { ...r, ...fullDriver };
+      })
+      .sort((a, b) => (a.priority || 999) - (b.priority || 999));
 
-  const handleSave = async () => {
-    if (!selectedDriverId) return;
-    setSaving(true);
-    try {
-      const driver = drivers.find((d) => d._id === selectedDriverId);
-      const updatedDriver = {
-        ...driver,
-        schedule: {
-          ...driver.schedule,
-          days: scheduleDays,
-          manualDates: manualDates,
-          excludedDates: excludedDates,
-        },
-      };
+    let availableVans = [...vans];
+    let availablePhones = equipment.filter(
+      (e) => e.type === "Phone" || e.type === "Tablet"
+    );
+    const newAssignments = [];
 
-      await apiClient.post("/api/driver-profiles", updatedDriver);
+    // Flatten requirements into a list of needed slots
+    const neededSlots = [];
+    Object.entries(requirements).forEach(([type, count]) => {
+      for (let i = 0; i < count; i++) neededSlots.push(type);
+    });
 
-      // Update local drivers list to reflect changes immediately in Overview
-      const updatedDrivers = drivers.map((d) =>
-        d._id === selectedDriverId
-          ? {
-              ...d,
-              schedule: {
-                ...d.schedule,
-                days: scheduleDays,
-                manualDates: manualDates.map((date) => date.toISOString()),
-                excludedDates: excludedDates.map((date) => date.toISOString()),
-              },
+    const assignedDriverIds = new Set();
+    const assignedVanIds = new Set();
+
+    const assign = (driver, van, slotIndex) => {
+      newAssignments.push({
+        driverId: driver._id,
+        vanId: van._id,
+        phoneId: null,
+      });
+      assignedDriverIds.add(driver._id);
+      assignedVanIds.add(van._id);
+      neededSlots.splice(slotIndex, 1);
+
+      workingDrivers = workingDrivers.filter((d) => d._id !== driver._id);
+      availableVans = availableVans.filter((v) => v._id !== van._id);
+    };
+
+    // Pass 1: Preferred Vans
+    for (const driver of [...workingDrivers]) {
+      if (assignedDriverIds.has(driver._id)) continue;
+
+      if (driver.preferredVans && driver.preferredVans.length > 0) {
+        for (const vanId of driver.preferredVans) {
+          const pVanId = typeof vanId === "object" ? vanId._id : vanId;
+          const van = availableVans.find((v) => v._id === pVanId);
+
+          if (van && !assignedVanIds.has(van._id)) {
+            const slotIndex = neededSlots.indexOf(van.serviceType);
+            if (slotIndex !== -1) {
+              assign(driver, van, slotIndex);
+              break;
             }
-          : d
-      );
-      setDrivers(updatedDrivers);
-      alert("Schedule saved successfully!");
-    } catch (error) {
-      console.error("Error saving schedule", error);
-      alert("Error saving schedule");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const getDaysInMonth = (year, month) => {
-    const date = new Date(year, month, 1);
-    const days = [];
-    while (date.getMonth() === month) {
-      days.push(new Date(date));
-      date.setDate(date.getDate() + 1);
-    }
-    return days;
-  };
-
-  const changeMonth = (offset) => {
-    const newDate = new Date(currentDate);
-    newDate.setMonth(newDate.getMonth() + offset);
-    setCurrentDate(newDate);
-  };
-
-  const renderCalendar = () => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const daysInMonth = getDaysInMonth(year, month);
-    const firstDayOfMonth = new Date(year, month, 1).getDay();
-    const blanks = Array(firstDayOfMonth).fill(null);
-    const allCells = [...blanks, ...daysInMonth];
-
-    return (
-      <div className="grid grid-cols-7 gap-2">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="font-bold text-center text-gray-600 py-2">
-            {d}
-          </div>
-        ))}
-        {allCells.map((date, index) => {
-          if (!date)
-            return (
-              <div
-                key={`blank-${index}`}
-                className="p-4 bg-gray-50 rounded"
-              ></div>
-            );
-
-          if (selectedDriverId) {
-            // Single Driver View
-            const working = isSelectedDriverWorking(date);
-            return (
-              <div
-                key={date.toISOString()}
-                onClick={() => handleDayClick(date)}
-                className={`min-h-[80px] p-2 border rounded cursor-pointer flex flex-col items-center justify-center transition-colors ${
-                  working
-                    ? "bg-green-100 border-green-500"
-                    : "bg-white hover:bg-gray-50"
-                }`}
-              >
-                <span className="font-medium">{date.getDate()}</span>
-                <input
-                  type="checkbox"
-                  checked={working}
-                  readOnly
-                  className="mt-2 h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                />
-              </div>
-            );
-          } else {
-            // Overview View
-            const workingDrivers = drivers.filter((d) =>
-              checkDriverSchedule(d, date)
-            );
-            const count = workingDrivers.length;
-            return (
-              <div
-                key={date.toISOString()}
-                onClick={() =>
-                  setSelectedDateDetails({
-                    date: date,
-                    drivers: workingDrivers,
-                  })
-                }
-                className="min-h-[80px] p-2 border rounded bg-white flex flex-col items-center justify-center cursor-pointer hover:bg-blue-50 transition-colors"
-              >
-                <span className="font-medium text-gray-500">
-                  {date.getDate()}
-                </span>
-                <div className="mt-1 text-xl font-bold text-blue-600">
-                  {count}
-                </div>
-                <span className="text-xs text-gray-500">Drivers</span>
-              </div>
-            );
           }
-        })}
-      </div>
-    );
+        }
+      }
+    }
+
+    // Pass 2: Preferred Service Types
+    for (const driver of [...workingDrivers]) {
+      if (assignedDriverIds.has(driver._id)) continue;
+
+      if (
+        driver.preferredServiceTypes &&
+        driver.preferredServiceTypes.length > 0
+      ) {
+        for (const type of driver.preferredServiceTypes) {
+          const slotIndex = neededSlots.indexOf(type);
+          if (slotIndex !== -1) {
+            const van = availableVans.find((v) => v.serviceType === type);
+            if (van) {
+              assign(driver, van, slotIndex);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Pass 3: Random / Remaining
+    while (neededSlots.length > 0 && workingDrivers.length > 0) {
+      const type = neededSlots[0];
+      const driver = workingDrivers[0];
+
+      const van = availableVans.find((v) => v.serviceType === type);
+
+      if (van) {
+        assign(driver, van, 0);
+      } else {
+        neededSlots.shift(); // Skip if no van available
+      }
+    }
+
+    // 4. Assign Phones
+    newAssignments.forEach((assignment) => {
+      const driver = drivers.find((d) => d._id === assignment.driverId);
+      let phone = null;
+
+      if (driver.preferredEquipment && driver.preferredEquipment.length > 0) {
+        for (const pId of driver.preferredEquipment) {
+          const pEqId = typeof pId === "object" ? pId._id : pId;
+          phone = availablePhones.find((p) => p._id === pEqId);
+          if (phone) break;
+        }
+      }
+
+      if (!phone && availablePhones.length > 0) {
+        phone = availablePhones[0];
+      }
+
+      if (phone) {
+        assignment.phoneId = phone._id;
+        availablePhones = availablePhones.filter((p) => p._id !== phone._id);
+      }
+    });
+
+    setAssignments(newAssignments);
   };
+
+  const uniqueServiceTypes = useMemo(() => {
+    const types = new Set(vans.map((v) => v.serviceType));
+    return Array.from(types);
+  }, [vans]);
 
   return (
-    <div className="flex h-[calc(100vh-64px)]">
-      {/* Left Sidebar: Driver List */}
-      <div className="w-1/4 bg-white border-r overflow-y-auto p-4">
-        <h2 className="text-xl font-bold mb-4">Drivers</h2>
-        <div
-          className={`p-3 mb-2 rounded cursor-pointer hover:bg-gray-100 ${
-            !selectedDriverId ? "bg-blue-50 border-blue-200 border" : ""
-          }`}
-          onClick={() => setSelectedDriverId(null)}
-        >
-          <span className="font-medium">Overview</span>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl h-[90vh] flex flex-col">
+        <div className="p-4 border-b flex justify-between items-center">
+          <h2 className="text-xl font-bold">
+            Schedule for {date.toDateString()}
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+          >
+            &times;
+          </button>
         </div>
-        <div className="space-y-1">
-          {drivers.map((driver) => (
-            <div
-              key={driver._id}
-              onClick={() => setSelectedDriverId(driver._id)}
-              className={`p-3 rounded cursor-pointer hover:bg-gray-100 ${
-                selectedDriverId === driver._id
-                  ? "bg-blue-100 border-blue-300 border"
-                  : ""
-              }`}
-            >
-              <div className="font-medium">{driver.name}</div>
-              <div className="text-xs text-gray-500">
-                {driver.transporterId}
+
+        <div className="flex border-b">
+          <button
+            className={`px-4 py-2 ${
+              activeTab === "roster"
+                ? "border-b-2 border-blue-500 font-bold"
+                : ""
+            }`}
+            onClick={() => setActiveTab("roster")}
+          >
+            Roster
+          </button>
+          <button
+            className={`px-4 py-2 ${
+              activeTab === "requirements"
+                ? "border-b-2 border-blue-500 font-bold"
+                : ""
+            }`}
+            onClick={() => setActiveTab("requirements")}
+          >
+            Requirements
+          </button>
+          <button
+            className={`px-4 py-2 ${
+              activeTab === "assignments"
+                ? "border-b-2 border-blue-500 font-bold"
+                : ""
+            }`}
+            onClick={() => setActiveTab("assignments")}
+          >
+            Assignments
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {activeTab === "roster" && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 font-bold mb-2">
+                <span>Name</span>
+                <span>Working?</span>
+                <span>Position</span>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Right Content: Calendar */}
-      <div className="w-3/4 p-6 overflow-y-auto relative">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold">
-            {selectedDriverId
-              ? `Schedule: ${
-                  drivers.find((d) => d._id === selectedDriverId)?.name
-                }`
-              : "Schedule Overview"}
-          </h1>
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={() => changeMonth(-1)}
-              className="px-3 py-1 border rounded hover:bg-gray-100"
-            >
-              &lt;
-            </button>
-            <span className="text-lg font-medium w-32 text-center">
-              {currentDate.toLocaleDateString("en-US", {
-                month: "long",
-                year: "numeric",
-              })}
-            </span>
-            <button
-              onClick={() => changeMonth(1)}
-              className="px-3 py-1 border rounded hover:bg-gray-100"
-            >
-              &gt;
-            </button>
-          </div>
-        </div>
-
-        {selectedDriverId && (
-          <div className="bg-gray-50 p-4 rounded mb-6 border">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wide">
-              Weekly Recurring Schedule
-            </h3>
-            <div className="flex flex-wrap gap-4">
-              {daysOfWeek.map((day) => (
-                <label
-                  key={day}
-                  className="flex items-center space-x-2 cursor-pointer"
+              {roster.map((item, idx) => (
+                <div
+                  key={item.driverId}
+                  className="grid grid-cols-3 items-center gap-2 border-b py-1"
                 >
+                  <span>{item.name}</span>
                   <input
                     type="checkbox"
-                    checked={scheduleDays.includes(day)}
-                    onChange={() => handlePresetChange(day)}
-                    className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                    checked={item.isWorking}
+                    onChange={(e) => {
+                      const newRoster = [...roster];
+                      newRoster[idx].isWorking = e.target.checked;
+                      setRoster(newRoster);
+                    }}
                   />
-                  <span>{day}</span>
-                </label>
+                  <select
+                    className="border rounded p-1"
+                    value={item.position}
+                    onChange={(e) => {
+                      const newRoster = [...roster];
+                      newRoster[idx].position = e.target.value;
+                      setRoster(newRoster);
+                    }}
+                    disabled={!item.isWorking}
+                  >
+                    <option value="Driver">Driver</option>
+                    {customPositions.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
 
-        {renderCalendar()}
-
-        {selectedDriverId && (
-          <div className="mt-6 flex justify-end">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 shadow"
-            >
-              {saving ? "Saving..." : "Save Changes"}
-            </button>
-          </div>
-        )}
-
-        {/* Date Details Modal */}
-        {selectedDateDetails && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-            <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md max-h-[80vh] flex flex-col">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold">
-                  {selectedDateDetails.date.toLocaleDateString("en-US", {
-                    weekday: "long",
-                    month: "long",
-                    day: "numeric",
-                  })}
-                </h3>
-                <button
-                  onClick={() => setSelectedDateDetails(null)}
-                  className="text-gray-500 hover:text-gray-700"
+          {activeTab === "requirements" && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Define how many vans of each type are needed.
+              </p>
+              {uniqueServiceTypes.map((type) => (
+                <div
+                  key={type}
+                  className="flex items-center justify-between max-w-xs"
                 >
-                  <svg
-                    className="w-6 h-6"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
+                  <label className="font-medium">{type}</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="border rounded p-1 w-20"
+                    value={requirements[type] || 0}
+                    onChange={(e) =>
+                      setRequirements({
+                        ...requirements,
+                        [type]: parseInt(e.target.value) || 0,
+                      })
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === "assignments" && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold">Assignments</h3>
+                <button
+                  onClick={handleAutoAssign}
+                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                >
+                  Auto-Assign
                 </button>
               </div>
 
-              <div className="overflow-y-auto flex-1">
-                <h4 className="font-semibold text-gray-700 mb-2">
-                  Scheduled Drivers ({selectedDateDetails.drivers.length})
-                </h4>
-                {selectedDateDetails.drivers.length > 0 ? (
-                  <ul className="divide-y divide-gray-200">
-                    {selectedDateDetails.drivers.map((d) => (
-                      <li
-                        key={d._id}
-                        className="py-2 flex justify-between items-center"
-                      >
-                        <span>{d.name}</span>
-                        <span className="text-xs text-gray-500">
-                          {d.transporterId}
-                        </span>
-                      </li>
+              {/* Warnings */}
+              {(() => {
+                const warnings = [];
+                const totalRequired = Object.values(requirements).reduce(
+                  (a, b) => a + b,
+                  0
+                );
+                const workingDriversCount = roster.filter(
+                  (r) => r.isWorking
+                ).length;
+                const availablePhonesCount = equipment.filter(
+                  (e) => e.type === "Phone" || e.type === "Tablet"
+                ).length;
+                const availableVansCount = vans.length;
+
+                if (availableVansCount < totalRequired)
+                  warnings.push("Requirement: Not enough vans");
+                if (workingDriversCount < totalRequired)
+                  warnings.push("Requirement: Not enough drivers");
+                if (availablePhonesCount < totalRequired)
+                  warnings.push("Requirement: Not enough phones");
+
+                return warnings.length > 0 ? (
+                  <div className="bg-red-50 border-l-4 border-red-500 p-4">
+                    {warnings.map((w, i) => (
+                      <p key={i} className="text-red-700">
+                        {w}
+                      </p>
                     ))}
-                  </ul>
+                  </div>
+                ) : null;
+              })()}
+
+              <div className="mt-4">
+                <div className="grid grid-cols-3 font-bold border-b pb-2">
+                  <span>Driver</span>
+                  <span>Van</span>
+                  <span>Phone</span>
+                </div>
+                {assignments.length === 0 ? (
+                  <p className="text-gray-500 py-4">No assignments yet.</p>
                 ) : (
-                  <p className="text-gray-500 italic">No drivers scheduled.</p>
+                  assignments.map((assign, idx) => {
+                    const driver = drivers.find(
+                      (d) => d._id === assign.driverId
+                    );
+                    const van = vans.find((v) => v._id === assign.vanId);
+                    const phone = equipment.find(
+                      (e) => e._id === assign.phoneId
+                    );
+                    return (
+                      <div key={idx} className="grid grid-cols-3 py-2 border-b">
+                        <span>{driver?.name || "Unknown"}</span>
+                        <span>
+                          {van?.vanId || "None"} ({van?.serviceType})
+                        </span>
+                        <span>
+                          {phone?.type === "Phone" ? "Phone" : phone?.type}{" "}
+                          {phone?.serialNumber || ""}
+                        </span>
+                      </div>
+                    );
+                  })
                 )}
               </div>
-
-              <div className="mt-6 flex justify-end">
-                <button
-                  onClick={() => setSelectedDateDetails(null)}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
-                >
-                  Close
-                </button>
-              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+
+        <div className="p-4 border-t flex justify-end space-x-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 border rounded hover:bg-gray-100"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          >
+            Save Schedule
+          </button>
+        </div>
       </div>
     </div>
   );
 };
 
-export default Scheduling;
+// --- Main Component ---
+const SchedulingCalendar = () => {
+  const { get, post } = useApi();
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [drivers, setDrivers] = useState([]);
+  const [vans, setVans] = useState([]);
+  const [equipment, setEquipment] = useState([]);
+  const [schedules, setSchedules] = useState([]);
+  const [customPositions, setCustomPositions] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  // Fetch initial data
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [driversRes, vansRes, equipmentRes, configRes] =
+          await Promise.all([
+            get("/api/driver-profiles"),
+            get("/api/vans"),
+            get("/api/equipment"),
+            get("/api/config/customPositions"),
+          ]);
+        setDrivers(driversRes);
+        setVans(vansRes);
+        setEquipment(equipmentRes);
+        setCustomPositions(configRes || []);
+      } catch (err) {
+        console.error("Error fetching initial data:", err);
+      }
+    };
+    fetchData();
+  }, [get]);
+
+  // Fetch schedules when month changes
+  useEffect(() => {
+    const fetchSchedules = async () => {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const start = new Date(year, month, 1).toISOString();
+      const end = new Date(year, month + 1, 0).toISOString();
+
+      try {
+        // Assuming API supports date range filtering
+        const res = await get(`/api/schedules?start=${start}&end=${end}`);
+        setSchedules(res);
+      } catch (err) {
+        console.error("Error fetching schedules:", err);
+      }
+    };
+    fetchSchedules();
+  }, [currentDate, get]);
+
+  const handlePrevMonth = () => {
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
+    );
+  };
+
+  const handleNextMonth = () => {
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1)
+    );
+  };
+
+  const handleDayClick = (day) => {
+    const date = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      day
+    );
+    setSelectedDate(date);
+  };
+
+  const handleSaveSchedule = async (payload) => {
+    try {
+      await post("/api/schedules", payload);
+      // Refresh schedules
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const start = new Date(year, month, 1).toISOString();
+      const end = new Date(year, month + 1, 0).toISOString();
+      const res = await get(`/api/schedules?start=${start}&end=${end}`);
+      setSchedules(res);
+      setSelectedDate(null);
+    } catch (err) {
+      console.error("Error saving schedule:", err);
+      alert("Failed to save schedule");
+    }
+  };
+
+  const renderCalendarDays = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const daysInMonth = getDaysInMonth(year, month);
+    const firstDay = getFirstDayOfMonth(year, month);
+
+    const days = [];
+
+    // Empty slots for previous month
+    for (let i = 0; i < firstDay; i++) {
+      days.push(
+        <div key={`empty-${i}`} className="h-32 border bg-gray-50"></div>
+      );
+    }
+
+    // Days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month, day);
+      const dateStr = formatDate(date);
+      const dayName = getDayName(date);
+
+      // Find schedule for this day
+      // Note: Date comparison needs to be careful with timezones.
+      // Assuming API returns ISO strings, we match YYYY-MM-DD.
+      const schedule = schedules.find((s) => s.date.startsWith(dateStr));
+
+      let workingCount = 0;
+      if (schedule) {
+        workingCount = schedule.roster.length; // Assuming roster only contains working people or we filter?
+        // The model says roster is [{driverId, position}].
+        // If they are in the roster, they are working.
+      } else {
+        // Calculate from recurring schedule
+        workingCount = drivers.filter((d) =>
+          d.schedule?.days?.includes(dayName)
+        ).length;
+      }
+
+      days.push(
+        <div
+          key={day}
+          className="h-32 border p-2 hover:bg-blue-50 cursor-pointer transition-colors relative"
+          onClick={() => handleDayClick(day)}
+        >
+          <div className="font-bold text-right">{day}</div>
+          <div className="mt-2">
+            <span
+              className={`inline-block px-2 py-1 rounded text-sm ${
+                schedule
+                  ? "bg-green-100 text-green-800"
+                  : "bg-gray-100 text-gray-800"
+              }`}
+            >
+              {workingCount} Drivers
+            </span>
+          </div>
+          {schedule && (
+            <div className="absolute bottom-2 right-2 text-xs text-green-600 font-bold">
+              Scheduled
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return days;
+  };
+
+  const currentSchedule = selectedDate
+    ? schedules.find((s) => s.date.startsWith(formatDate(selectedDate)))
+    : null;
+
+  return (
+    <PageShell title="Scheduling Calendar">
+      <div className="mb-4 flex justify-between items-center">
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={handlePrevMonth}
+            className="p-2 border rounded hover:bg-gray-100"
+          >
+            &lt;
+          </button>
+          <h2 className="text-xl font-bold">
+            {currentDate.toLocaleString("default", {
+              month: "long",
+              year: "numeric",
+            })}
+          </h2>
+          <button
+            onClick={handleNextMonth}
+            className="p-2 border rounded hover:bg-gray-100"
+          >
+            &gt;
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-7 gap-0 border-t border-l">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+          <div
+            key={d}
+            className="p-2 text-center font-bold border-r border-b bg-gray-100"
+          >
+            {d}
+          </div>
+        ))}
+        {renderCalendarDays()}
+      </div>
+
+      {selectedDate && (
+        <DayDetailsModal
+          date={selectedDate}
+          onClose={() => setSelectedDate(null)}
+          drivers={drivers}
+          vans={vans}
+          equipment={equipment}
+          schedule={currentSchedule}
+          onSave={handleSaveSchedule}
+          customPositions={customPositions}
+        />
+      )}
+    </PageShell>
+  );
+};
+
+export default SchedulingCalendar;

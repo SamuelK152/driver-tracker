@@ -23,4 +23,25 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   res.status(200).json(driver);
 }));
 
+// Bulk update driver priorities
+router.put('/priority', auth, asyncHandler(async (req, res) => {
+  const updates = req.body; // Array of { _id, priority }
+  if (!Array.isArray(updates)) {
+    return res.status(400).json({ message: 'Input must be an array' });
+  }
+
+  const operations = updates.map(u => ({
+    updateOne: {
+      filter: { _id: u._id },
+      update: { $set: { priority: u.priority } }
+    }
+  }));
+
+  if (operations.length > 0) {
+    await Driver.bulkWrite(operations);
+  }
+
+  res.status(200).json({ message: 'Priorities updated' });
+}));
+
 module.exports = router;

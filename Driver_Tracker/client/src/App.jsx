@@ -6,6 +6,7 @@ import Scheduling from "./pages/Scheduling";
 import Routing from "./pages/Routing";
 import Employees from "./pages/Employees";
 import SchedulingCalendar from "./pages/SchedulingCalendar";
+import ManagePriority from "./pages/ManagePriority";
 import Fleet from "./pages/Fleet";
 import Vans from "./pages/Vans";
 import Equipment from "./pages/Equipment";
@@ -35,12 +36,13 @@ function App() {
           }
         >
           <Route path="/" element={<Dashboard />} />
-          
+
           {/* Scheduling Routes */}
           <Route path="/scheduling" element={<Scheduling />} />
           <Route path="/scheduling/routing" element={<Routing />} />
           <Route path="/scheduling/employees" element={<Employees />} />
           <Route path="/scheduling/calendar" element={<SchedulingCalendar />} />
+          <Route path="/scheduling/manage" element={<ManagePriority />} />
 
           {/* Fleet Routes */}
           <Route path="/fleet" element={<Fleet />} />
