@@ -50,7 +50,12 @@ const Progress = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const today = new Date().toISOString().split("T")[0];
+      // Use local date to ensure we fetch data for the current day in user's timezone
+      const date = new Date();
+      const offset = date.getTimezoneOffset();
+      const today = new Date(date.getTime() - offset * 60000)
+        .toISOString()
+        .split("T")[0];
 
       const [routesRes, metricsRes] = await Promise.all([
         apiClient.get(`/api/routes?date=${today}`),
@@ -62,8 +67,9 @@ const Progress = () => {
 
       // Merge Data
       const merged = routes.map((route) => {
+        // Robust ID comparison (handles populated objects vs strings)
         const metric = metrics.find(
-          (m) => m.routeId?._id === route._id || m.routeId === route._id
+          (m) => String(m.routeId?._id || m.routeId) === String(route._id)
         );
 
         // Calculate rescue stats
@@ -152,7 +158,12 @@ const Progress = () => {
 
   const uploadData = async (dataToUpload, newEntities = null) => {
     try {
-      const today = new Date().toISOString().split("T")[0];
+      // Use local date for upload as well
+      const date = new Date();
+      const offset = date.getTimezoneOffset();
+      const today = new Date(date.getTime() - offset * 60000)
+        .toISOString()
+        .split("T")[0];
 
       const payload = {
         metrics: dataToUpload,

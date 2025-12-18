@@ -7,7 +7,7 @@ const asyncHandler = require('../utils/asyncHandler');
 
 // Get all vans
 router.get('/', auth, asyncHandler(async (req, res) => {
-  const vans = await Van.find().sort({ vanId: 1, vin: 1 });
+  const vans = await Van.find().populate('serviceTypeId').sort({ vanId: 1, vin: 1 });
   res.status(200).json(vans);
 }));
 

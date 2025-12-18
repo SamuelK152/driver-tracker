@@ -3,6 +3,53 @@ import apiClient from "../lib/apiClient";
 import StatusBadge from "../lib/StatusBadge";
 import PageShell from "../lib/PageShell";
 
+const ServiceTypeAutocomplete = ({
+  value,
+  onChange,
+  serviceTypes,
+  placeholder,
+  className,
+}) => {
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const filteredTypes = serviceTypes.filter((t) =>
+    t.name.toLowerCase().includes(value.toLowerCase())
+  );
+
+  return (
+    <div className={`relative ${className}`}>
+      <input
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setShowSuggestions(true);
+        }}
+        onFocus={() => setShowSuggestions(true)}
+        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+        className="border rounded px-3 py-2 w-full"
+      />
+      {showSuggestions && value && filteredTypes.length > 0 && (
+        <ul className="absolute z-10 w-full bg-white border rounded shadow-lg max-h-40 overflow-y-auto mt-1">
+          {filteredTypes.map((type) => (
+            <li
+              key={type._id}
+              className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+              onClick={() => {
+                onChange(type.name);
+                setShowSuggestions(false);
+              }}
+            >
+              {type.name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
 const Vans = () => {
   const [vans, setVans] = useState([]);
   const [serviceTypes, setServiceTypes] = useState([]);
@@ -18,6 +65,9 @@ const Vans = () => {
   const [loading, setLoading] = useState(true);
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [editingVan, setEditingVan] = useState(null);
+  const [newVanServiceTypeInput, setNewVanServiceTypeInput] = useState("");
+  const [editingVanServiceTypeInput, setEditingVanServiceTypeInput] =
+    useState("");
 
   useEffect(() => {
     fetchData();
@@ -39,10 +89,33 @@ const Vans = () => {
     }
   };
 
+  const getOrCreateServiceType = async (typeName) => {
+    if (!typeName) return null;
+    const trimmedName = typeName.trim();
+    const existing = serviceTypes.find(
+      (t) => t.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (existing) return existing._id;
+
+    try {
+      const res = await apiClient.post("/api/service-types", {
+        name: trimmedName,
+      });
+      setServiceTypes((prev) => [...prev, res.data]);
+      return res.data._id;
+    } catch (error) {
+      console.error("Error creating service type", error);
+      throw error;
+    }
+  };
+
   const handleAddVan = async (e) => {
     e.preventDefault();
     try {
-      await apiClient.post("/api/vans", newVan);
+      const serviceTypeId = await getOrCreateServiceType(
+        newVanServiceTypeInput
+      );
+      await apiClient.post("/api/vans", { ...newVan, serviceTypeId });
       setNewVan({
         vanId: "",
         vin: "",
@@ -52,6 +125,7 @@ const Vans = () => {
         licensePlate: "",
         serviceType: "",
       });
+      setNewVanServiceTypeInput("");
       fetchData();
       alert("Van added successfully");
     } catch (error) {
@@ -64,7 +138,13 @@ const Vans = () => {
     e.preventDefault();
     if (!editingVan) return;
     try {
-      await apiClient.put(`/api/vans/${editingVan._id}`, editingVan);
+      const serviceTypeId = await getOrCreateServiceType(
+        editingVanServiceTypeInput
+      );
+      await apiClient.put(`/api/vans/${editingVan._id}`, {
+        ...editingVan,
+        serviceTypeId,
+      });
       setEditingVan(null);
       fetchData();
       alert("Van updated successfully");
@@ -104,8 +184,10 @@ const Vans = () => {
                 onClick={() => {
                   setEditingVan({
                     ...van,
-                    serviceType: van.serviceType?._id || van.serviceType || "",
+                    serviceTypeId:
+                      van.serviceTypeId?._id || van.serviceTypeId || "",
                   });
+                  setEditingVanServiceTypeInput(van.serviceTypeId?.name || "");
                   setActiveMenuId(null);
                 }}
               >
@@ -152,20 +234,42 @@ const Vans = () => {
               onChange={(e) => setNewVan({ ...newVan, vin: e.target.value })}
               className="border rounded px-3 py-2"
             />
-            <select
-              value={newVan.serviceType}
+            <input
+              type="text"
+              placeholder="Make"
+              value={newVan.make}
+              onChange={(e) => setNewVan({ ...newVan, make: e.target.value })}
+              className="border rounded px-3 py-2"
+            />
+            <input
+              type="text"
+              placeholder="Model"
+              value={newVan.model}
+              onChange={(e) => setNewVan({ ...newVan, model: e.target.value })}
+              className="border rounded px-3 py-2"
+            />
+            <input
+              type="number"
+              placeholder="Year"
+              value={newVan.year}
+              onChange={(e) => setNewVan({ ...newVan, year: e.target.value })}
+              className="border rounded px-3 py-2"
+            />
+            <input
+              type="text"
+              placeholder="License Plate"
+              value={newVan.licensePlate}
               onChange={(e) =>
-                setNewVan({ ...newVan, serviceType: e.target.value })
+                setNewVan({ ...newVan, licensePlate: e.target.value })
               }
               className="border rounded px-3 py-2"
-            >
-              <option value="">Select Service Type</option>
-              {serviceTypes.map((type) => (
-                <option key={type._id} value={type._id}>
-                  {type.name}
-                </option>
-              ))}
-            </select>
+            />
+            <ServiceTypeAutocomplete
+              value={newVanServiceTypeInput}
+              onChange={setNewVanServiceTypeInput}
+              serviceTypes={serviceTypes}
+              placeholder="Service Type"
+            />
             <button
               type="submit"
               className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
@@ -187,6 +291,15 @@ const Vans = () => {
                   VIN
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Make/Model
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Year
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  License Plate
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Service Type
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -205,7 +318,14 @@ const Vans = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">{van.vin}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {van.serviceType?.name || "Unlisted"}
+                    {van.make} {van.model}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">{van.year}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {van.licensePlate}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {van.serviceTypeId?.name || "Unlisted"}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <StatusBadge status={van.status} />
@@ -230,25 +350,70 @@ const Vans = () => {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">
-                      Service Type
+                      Make
                     </label>
-                    <select
-                      value={editingVan.serviceType}
+                    <input
+                      type="text"
+                      value={editingVan.make || ""}
+                      onChange={(e) =>
+                        setEditingVan({ ...editingVan, make: e.target.value })
+                      }
+                      className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Model
+                    </label>
+                    <input
+                      type="text"
+                      value={editingVan.model || ""}
+                      onChange={(e) =>
+                        setEditingVan({ ...editingVan, model: e.target.value })
+                      }
+                      className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Year
+                    </label>
+                    <input
+                      type="number"
+                      value={editingVan.year || ""}
+                      onChange={(e) =>
+                        setEditingVan({ ...editingVan, year: e.target.value })
+                      }
+                      className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      License Plate
+                    </label>
+                    <input
+                      type="text"
+                      value={editingVan.licensePlate || ""}
                       onChange={(e) =>
                         setEditingVan({
                           ...editingVan,
-                          serviceType: e.target.value,
+                          licensePlate: e.target.value,
                         })
                       }
                       className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
-                    >
-                      <option value="">Select Service Type</option>
-                      {serviceTypes.map((type) => (
-                        <option key={type._id} value={type._id}>
-                          {type.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Service Type
+                    </label>
+                    <ServiceTypeAutocomplete
+                      value={editingVanServiceTypeInput}
+                      onChange={setEditingVanServiceTypeInput}
+                      serviceTypes={serviceTypes}
+                      placeholder="Select Service Type"
+                      className="mt-1"
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">
