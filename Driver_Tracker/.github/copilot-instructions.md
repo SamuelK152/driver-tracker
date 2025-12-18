@@ -5,7 +5,7 @@
 - [x] Clarify Project Requirements
 <!-- Ask for project type, language, and frameworks if not specified. Skip if already provided. -->
 
-- [ ] Scaffold the Project
+- [x] Scaffold the Project
 <!--
 Ensure that the previous step has been marked as completed.
 Call project setup tool with projectType parameter.
@@ -23,10 +23,10 @@ Apply modifications using appropriate tools and user-provided references.
 Skip this step for "Hello World" projects.
 -->
 
-- [ ] Install Required Extensions
+- [x] Install Required Extensions
 <!-- ONLY install extensions provided mentioned in the get_project_setup_info. Skip this step otherwise and mark as completed. -->
 
-- [ ] Compile the Project
+- [x] Compile the Project
 <!--
 Verify that all previous steps have been completed.
 Install any missing dependencies.

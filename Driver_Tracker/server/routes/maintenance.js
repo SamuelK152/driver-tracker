@@ -6,66 +6,56 @@ const asyncHandler = require('../utils/asyncHandler');
 
 // Get all maintenance records
 router.get('/', auth, asyncHandler(async (req, res) => {
-  const records = await Maintenance.find()
-    .populate('reportedBy', 'username')
-    .populate('notes.user', 'username')
-    .sort({ reportedAt: -1 });
-  res.status(200).json(records);
-}));
-
-// Get maintenance records (log view)
-router.get('/logs', auth, asyncHandler(async (req, res) => {
-  const logs = await Maintenance.find()
-    .populate('reportedBy', 'username')
-    .populate('notes.user', 'username')
-    .sort({ reportedAt: -1 });
-  res.status(200).json(logs);
+    const records = await Maintenance.find()
+        .populate('relatedAsset') // Polymorphic populate
+        .populate('reportedBy', 'username')
+        .populate('notes.user', 'username')
+        .sort({ reportedAt: -1 });
+    res.status(200).json(records);
 }));
 
 // Create a maintenance record
 router.post('/', auth, asyncHandler(async (req, res) => {
-  const maintenance = new Maintenance({
-    ...req.body,
-    relatedId: String(req.body.relatedId),
-    reportedBy: req.userData.id
-  });
-  await maintenance.save();
+    const maintenance = new Maintenance({
+        ...req.body,
+        reportedBy: req.userData.id
+    });
+    await maintenance.save();
 
-  res.status(201).json(maintenance);
+    res.status(201).json(maintenance);
 }));
 
-// Update a maintenance record (including resolving)
+// Update a maintenance record
 router.put('/:id', auth, asyncHandler(async (req, res) => {
-  const maintenance = await Maintenance.findById(req.params.id);
-  if (!maintenance) return res.status(404).json({ message: 'Maintenance not found' });
+    const maintenance = await Maintenance.findById(req.params.id);
+    if (!maintenance) return res.status(404).json({ message: 'Maintenance not found' });
 
-  const prevStatus = maintenance.status;
-  maintenance.description = req.body.description ?? maintenance.description;
-  maintenance.priority = req.body.priority ?? maintenance.priority;
-  maintenance.status = req.body.status ?? maintenance.status;
-  maintenance.resolutionNotes = req.body.resolutionNotes ?? maintenance.resolutionNotes;
+    maintenance.description = req.body.description ?? maintenance.description;
+    maintenance.priority = req.body.priority ?? maintenance.priority;
+    maintenance.status = req.body.status ?? maintenance.status;
+    maintenance.resolutionNotes = req.body.resolutionNotes ?? maintenance.resolutionNotes;
+    maintenance.cost = req.body.cost ?? maintenance.cost;
 
-  if (maintenance.status === 'Resolved' && !maintenance.resolvedAt) {
-    maintenance.resolvedAt = new Date();
-  }
+    if (maintenance.status === 'Resolved' && !maintenance.resolvedAt) {
+        maintenance.resolvedAt = new Date();
+    }
 
-  await maintenance.save();
-
-  res.status(200).json(maintenance);
+    await maintenance.save();
+    res.status(200).json(maintenance);
 }));
 
-// Add a note to maintenance
+// Add note
 router.post('/:id/notes', auth, asyncHandler(async (req, res) => {
-  const { body } = req.body;
-  if (!body) return res.status(400).json({ message: 'Note body is required' });
+    const maintenance = await Maintenance.findById(req.params.id);
+    if (!maintenance) return res.status(404).json({ message: 'Maintenance not found' });
 
-  const maintenance = await Maintenance.findById(req.params.id);
-  if (!maintenance) return res.status(404).json({ message: 'Maintenance not found' });
+    maintenance.notes.push({
+        body: req.body.body,
+        user: req.userData.id
+    });
 
-  maintenance.notes.push({ body, user: req.userData.id });
-  await maintenance.save();
-
-  res.status(200).json(maintenance);
+    await maintenance.save();
+    res.status(201).json(maintenance);
 }));
 
 module.exports = router;

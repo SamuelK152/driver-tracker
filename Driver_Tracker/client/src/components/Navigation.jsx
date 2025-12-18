@@ -9,7 +9,7 @@ const Navigation = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Sidebar State
-  const [isSchedulingOpen, setIsSchedulingOpen] = useState(false);
+  const [isPlanningOpen, setIsPlanningOpen] = useState(false);
   const [isFleetOpen, setIsFleetOpen] = useState(false);
   const [isDispatchOpen, setIsDispatchOpen] = useState(false);
 
@@ -160,24 +160,24 @@ const Navigation = () => {
                 Dashboard
               </Link>
 
-              {/* Scheduling Dropdown */}
+              {/* Planning Dropdown */}
               <div>
                 <div className="flex items-center justify-between px-4 py-2 rounded hover:bg-gray-700">
                   <Link
-                    to="/scheduling"
+                    to="/planning"
                     className={`flex-grow whitespace-nowrap focus:outline-none ${
-                      isActive("/scheduling") ? "text-blue-400" : ""
+                      isActive("/planning") ? "text-blue-400" : ""
                     }`}
                   >
-                    Scheduling
+                    Planning
                   </Link>
                   <button
-                    onClick={() => setIsSchedulingOpen(!isSchedulingOpen)}
+                    onClick={() => setIsPlanningOpen(!isPlanningOpen)}
                     className="focus:outline-none ml-2 p-1 rounded hover:bg-gray-600"
                   >
                     <svg
                       className={`w-4 h-4 transition-transform ${
-                        isSchedulingOpen ? "transform rotate-180" : ""
+                        isPlanningOpen ? "transform rotate-180" : ""
                       }`}
                       fill="none"
                       stroke="currentColor"
@@ -192,36 +192,36 @@ const Navigation = () => {
                     </svg>
                   </button>
                 </div>
-                {isSchedulingOpen && (
+                {isPlanningOpen && (
                   <div className="pl-6 space-y-1 mt-1">
                     <Link
-                      to="/scheduling/routing"
+                      to="/planning/assignments"
                       className={`block px-4 py-2 rounded hover:bg-gray-700 text-sm whitespace-nowrap ${
-                        isActive("/scheduling/routing") ? "bg-gray-700" : ""
+                        isActive("/planning/assignments") ? "bg-gray-700" : ""
                       }`}
                     >
-                      Routing
+                      Assignments
                     </Link>
                     <Link
-                      to="/scheduling/employees"
+                      to="/planning/employees"
                       className={`block px-4 py-2 rounded hover:bg-gray-700 text-sm whitespace-nowrap ${
-                        isActive("/scheduling/employees") ? "bg-gray-700" : ""
+                        isActive("/planning/employees") ? "bg-gray-700" : ""
                       }`}
                     >
                       Employees
                     </Link>
                     <Link
-                      to="/scheduling/calendar"
+                      to="/planning/scheduling"
                       className={`block px-4 py-2 rounded hover:bg-gray-700 text-sm whitespace-nowrap ${
-                        isActive("/scheduling/calendar") ? "bg-gray-700" : ""
+                        isActive("/planning/scheduling") ? "bg-gray-700" : ""
                       }`}
                     >
-                      Calendar
+                      Scheduling
                     </Link>
                     <Link
-                      to="/scheduling/manage"
+                      to="/planning/manage"
                       className={`block px-4 py-2 rounded hover:bg-gray-700 text-sm whitespace-nowrap ${
-                        isActive("/scheduling/manage") ? "bg-gray-700" : ""
+                        isActive("/planning/manage") ? "bg-gray-700" : ""
                       }`}
                     >
                       Manage

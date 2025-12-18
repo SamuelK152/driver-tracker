@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 
-const EquipmentSchema = new mongoose.Schema({
-    type: { type: String, required: true }, // e.g., 'Scanner', 'Dolly', 'Uniform'
+const PhoneSchema = new mongoose.Schema({
     serialNumber: { type: String, required: true, unique: true },
+    phoneNumber: { type: String, required: true },
     status: {
         type: String,
         enum: ['Available', 'In Use', 'Missing', 'Broken', 'Maintenance'],
@@ -12,4 +12,4 @@ const EquipmentSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-module.exports = mongoose.model('Equipment', EquipmentSchema);
+module.exports = mongoose.model('Phone', PhoneSchema);

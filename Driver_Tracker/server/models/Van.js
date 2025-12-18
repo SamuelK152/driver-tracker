@@ -7,7 +7,7 @@ const VanSchema = new mongoose.Schema({
   model: String,
   year: Number,
   licensePlate: String,
-  serviceType: { type: String, default: 'Unlisted' },
+  serviceType: { type: mongoose.Schema.Types.ObjectId, ref: 'ServiceType' },
   status: {
     type: String,
     enum: ['Active', 'Maintenance', 'Retired'],

@@ -51,7 +51,7 @@ const MetricsGraph = ({
 
     const dataMap = {};
     data.forEach((item) => {
-      const d = new Date(item.createdAt);
+      const d = new Date(item.date);
       // Normalize to local date string for comparison
       const dateStr = d.toLocaleDateString();
       dataMap[dateStr] = item;
@@ -546,10 +546,10 @@ const History = () => {
 
   const fetchListData = async () => {
     try {
-      let url = "/api/drivers/list";
-      if (viewMode === "routes") url = "/api/drivers/routes";
+      let url = "/api/metrics/list";
+      if (viewMode === "routes") url = "/api/metrics/routes";
       if (viewMode === "dates" || viewMode === "rescues")
-        url = "/api/drivers/dates";
+        url = "/api/metrics/dates";
 
       const { data: responseData } = await apiClient.get(url);
 
@@ -571,10 +571,51 @@ const History = () => {
   // Helper to fetch summary data
   const fetchSummary = async (start, end) => {
     try {
-      const { data } = await apiClient.get("/api/drivers/summary", {
+      const { data } = await apiClient.get("/api/metrics/summary", {
         params: { start: start.toISOString(), end: end.toISOString() },
       });
-      setSummaryData(data);
+
+      // Aggregate data by driver
+      const aggregated = data.reduce((acc, curr) => {
+        const id = curr.transporterId;
+        if (!acc[id]) {
+          acc[id] = {
+            transporterId: id,
+            driverName: curr.driverName,
+            totalStops: 0,
+            totalPackages: 0,
+            paceSum: 0,
+            paceCount: 0,
+            targetDiff: 0,
+            totalRescueStops: 0,
+            totalRescuedStops: 0,
+          };
+        }
+
+        acc[id].totalStops += curr.stopsComplete || 0;
+        acc[id].totalPackages += curr.totalPackages || 0;
+        if (curr.avgPace) {
+          acc[id].paceSum += curr.avgPace;
+          acc[id].paceCount++;
+        }
+        acc[id].targetDiff += getTargetMinutes(curr.signOut);
+
+        if (curr.rescueLog) {
+          curr.rescueLog.forEach((log) => {
+            if (log.type === "GAVE") acc[id].totalRescueStops += log.count;
+            if (log.type === "RECEIVED") acc[id].totalRescuedStops += log.count;
+          });
+        }
+
+        return acc;
+      }, {});
+
+      const result = Object.values(aggregated).map((d) => ({
+        ...d,
+        avgPace: d.paceCount > 0 ? d.paceSum / d.paceCount : 0,
+      }));
+
+      setSummaryData(result);
     } catch (error) {
       console.error("Error fetching summary:", error);
     }
@@ -616,7 +657,7 @@ const History = () => {
         setSelectedItem(item); // For title
         try {
           const { data } = await apiClient.get(
-            `/api/drivers/date/${encodeURIComponent(item)}`
+            `/api/metrics/date/${encodeURIComponent(item)}`
           );
           setHistory(data);
         } catch (error) {
@@ -632,16 +673,16 @@ const History = () => {
     try {
       let url = "";
       if (viewMode === "drivers")
-        url = `/api/drivers/${encodeURIComponent(item.transporterId)}`;
+        url = `/api/metrics/driver/${encodeURIComponent(item.transporterId)}`;
       if (viewMode === "routes")
-        url = `/api/drivers/route/${encodeURIComponent(item)}`;
+        url = `/api/metrics/route/${encodeURIComponent(item)}`;
 
       const { data } = await apiClient.get(url);
 
       // Process data for Route view to group by date
       if (viewMode === "routes") {
         const grouped = data.reduce((acc, curr) => {
-          const date = new Date(curr.createdAt).toLocaleDateString();
+          const date = new Date(curr.date).toLocaleDateString();
           if (!acc[date]) {
             acc[date] = { ...curr, driverNames: [curr.driverName] };
           } else {
@@ -651,12 +692,12 @@ const History = () => {
         }, {});
         setHistory(
           Object.values(grouped).sort(
-            (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+            (a, b) => new Date(b.date) - new Date(a.date)
           )
         );
 
         // Set initial period for routes
-        const dates = Object.values(grouped).map((d) => new Date(d.createdAt));
+        const dates = Object.values(grouped).map((d) => new Date(d.date));
         if (dates.length > 0) {
           const maxDate = new Date(Math.max.apply(null, dates));
           setCurrentPeriodStart(
@@ -679,7 +720,7 @@ const History = () => {
           (viewMode === "drivers" || viewMode === "rescues") &&
           data.length > 0
         ) {
-          const dates = data.map((d) => new Date(d.createdAt));
+          const dates = data.map((d) => new Date(d.date));
           const maxDate = new Date(Math.max.apply(null, dates));
           setCurrentPeriodStart(
             timeRange === "month"
@@ -725,11 +766,13 @@ const History = () => {
     setSelectedItem(null);
   };
 
-  // Helper to parse YYYY-MM-DD to local Date object
+  // Helper to parse YYYY-MM-DD or ISO string to local Date object (preserving calendar day)
   const parseLocalDate = (dateStr) => {
     if (!dateStr) return new Date();
-    const [y, m, d] = dateStr.split("-").map(Number);
-    return new Date(y, m - 1, d);
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return new Date();
+    // If it's an ISO string (UTC), convert to local date with same calendar components
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   };
 
   const renderList = () => {
@@ -1027,7 +1070,7 @@ const History = () => {
       if (timeRange === "all") return true;
       if (!currentPeriodStart) return true;
 
-      const recordDate = new Date(record.createdAt);
+      const recordDate = new Date(record.date);
 
       if (timeRange === "week") {
         const weekEnd = new Date(currentPeriodStart);
@@ -1122,7 +1165,7 @@ const History = () => {
     }
 
     return filteredHistory.map((record, index) => {
-      const date = new Date(record.createdAt).toLocaleDateString();
+      const date = new Date(record.date).toLocaleDateString();
 
       // Helper to format equipment
       const formatEquipment = (equipList) => {

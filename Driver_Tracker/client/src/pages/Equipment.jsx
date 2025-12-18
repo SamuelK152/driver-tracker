@@ -1,419 +1,242 @@
 import React, { useState, useEffect } from "react";
 import apiClient from "../lib/apiClient";
+import PageShell from "../lib/PageShell";
 
 const Equipment = () => {
   const [equipment, setEquipment] = useState([]);
-  const [vans, setVans] = useState([]);
+  const [phones, setPhones] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("Equipment"); // 'Equipment' or 'Phones'
+
+  // Form State
   const [form, setForm] = useState({
-    category: "Phone",
-    id: "",
-    phoneNumber: "",
-    typeValue: "",
-    count: "",
-    vanId: "",
+    type: "Scanner", // Default for Equipment
+    serialNumber: "",
+    phoneNumber: "", // Only for Phone
     notes: "",
   });
-  const [loading, setLoading] = useState(true);
-  const [selectedType, setSelectedType] = useState("Phone");
 
   useEffect(() => {
-    fetchEquipment();
-    fetchVans();
+    fetchData();
   }, []);
 
-  const fetchEquipment = async () => {
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      const res = await apiClient.get("/api/equipment");
-      setEquipment(res.data);
-      setLoading(false);
+      const [equipRes, phonesRes] = await Promise.all([
+        apiClient.get("/api/equipment"),
+        apiClient.get("/api/phones"),
+      ]);
+      setEquipment(equipRes.data);
+      setPhones(phonesRes.data);
     } catch (error) {
-      console.error("Error fetching equipment", error);
+      console.error("Error fetching data", error);
+    } finally {
       setLoading(false);
     }
   };
 
-  const fetchVans = async () => {
-    try {
-      const res = await apiClient.get("/api/vans");
-      setVans(res.data || []);
-    } catch (error) {
-      console.error("Error fetching vans", error);
-    }
-  };
-
-  const handleAdd = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
-    const payload = buildPayload();
-    if (!payload) return;
-
     try {
-      await apiClient.post("/api/equipment", payload);
+      if (activeTab === "Phones") {
+        await apiClient.post("/api/phones", {
+          serialNumber: form.serialNumber,
+          phoneNumber: form.phoneNumber,
+          notes: form.notes,
+        });
+      } else {
+        await apiClient.post("/api/equipment", {
+          type: form.type,
+          serialNumber: form.serialNumber,
+          notes: form.notes,
+        });
+      }
       setForm({
-        category: "Phone",
-        id: "",
+        type: "Scanner",
+        serialNumber: "",
         phoneNumber: "",
-        typeValue: "",
-        count: "",
-        vanId: "",
         notes: "",
       });
-      fetchEquipment();
+      fetchData();
+      alert(
+        `${activeTab === "Phones" ? "Phone" : "Equipment"} added successfully`
+      );
     } catch (error) {
-      console.error("Error adding equipment", error);
-      alert("Error adding equipment");
+      console.error("Error adding item", error);
+      alert("Failed to add item");
     }
   };
-
-  const buildPayload = () => {
-    const { category, id, phoneNumber, typeValue, count, vanId, notes } = form;
-
-    if (category === "Phone") {
-      if (!id) return alertMissing("ID");
-      return {
-        type: "Phone",
-        serialNumber: id,
-        phoneNumber,
-        notes,
-      };
-    }
-
-    if (category === "Gas Card") {
-      return {
-        type: "Gas Card",
-        serialNumber: id || undefined,
-        van: vanId || null,
-        notes,
-      };
-    }
-
-    if (category === "Bulk") {
-      if (!typeValue) return alertMissing("Type");
-      if (!count) return alertMissing("Count");
-      return {
-        type: typeValue,
-        serialNumber: count,
-        notes,
-      };
-    }
-
-    // Other
-    if (!typeValue) return alertMissing("Type");
-    if (!id) return alertMissing("ID");
-    return {
-      type: typeValue,
-      serialNumber: id,
-      notes,
-    };
-  };
-
-  const alertMissing = (field) => {
-    alert(`Please provide ${field}`);
-    return null;
-  };
-
-  const markMissing = async (id) => {
-    if (
-      !window.confirm(
-        "Are you sure you want to mark this item as missing? This will create a maintenance record."
-      )
-    )
-      return;
-    try {
-      await apiClient.post(`/api/equipment/${id}/missing`, {});
-      fetchEquipment();
-    } catch (error) {
-      console.error("Error marking missing", error);
-      alert("Error marking missing");
-    }
-  };
-
-  const allTypes = Array.from(
-    new Set(["Phone", "Gas Card", ...equipment.map((e) => e.type)])
-  ).sort();
-  const filteredEquipment = equipment.filter(
-    (item) => item.type === selectedType
-  );
 
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Equipment Inventory</h1>
-
-      <div className="bg-white p-4 rounded shadow mb-6">
-        <h2 className="text-xl font-semibold mb-2">Add New Equipment</h2>
-        <form
-          onSubmit={handleAdd}
-          className="grid grid-cols-1 md:grid-cols-5 gap-4"
-        >
-          <select
-            className="border p-2 rounded"
-            value={form.category}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                category: e.target.value,
-                id: "",
-                phoneNumber: "",
-                typeValue: "",
-                count: "",
-                vanId: "",
-              })
-            }
-          >
-            <option value="Phone">Phone</option>
-            <option value="Gas Card">Gas Card</option>
-            <option value="Bulk">Bulk</option>
-            <option value="Other">Other</option>
-          </select>
-
-          {form.category === "Phone" && (
-            <>
-              <input
-                type="text"
-                placeholder="ID"
-                className="border p-2 rounded"
-                value={form.id}
-                onChange={(e) => setForm({ ...form, id: e.target.value })}
-              />
-              <input
-                type="text"
-                placeholder="Phone Number"
-                className="border p-2 rounded"
-                value={form.phoneNumber}
-                onChange={(e) =>
-                  setForm({ ...form, phoneNumber: e.target.value })
-                }
-              />
-              <input
-                type="text"
-                placeholder="Note"
-                className="border p-2 rounded"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              />
-            </>
-          )}
-
-          {form.category === "Gas Card" && (
-            <>
-              <input
-                type="text"
-                placeholder="ID (optional)"
-                className="border p-2 rounded"
-                value={form.id}
-                onChange={(e) => setForm({ ...form, id: e.target.value })}
-              />
-              <select
-                className="border p-2 rounded"
-                value={form.vanId}
-                onChange={(e) => setForm({ ...form, vanId: e.target.value })}
-              >
-                <option value="">No Van</option>
-                {vans.map((van) => (
-                  <option key={van._id} value={van._id}>
-                    {van.vanId || van.vin || van._id}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                placeholder="Note"
-                className="border p-2 rounded"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              />
-            </>
-          )}
-
-          {form.category === "Bulk" && (
-            <>
-              <input
-                type="text"
-                placeholder="Type"
-                className="border p-2 rounded"
-                value={form.typeValue}
-                onChange={(e) =>
-                  setForm({ ...form, typeValue: e.target.value })
-                }
-              />
-              <input
-                type="text"
-                placeholder="Count"
-                className="border p-2 rounded"
-                value={form.count}
-                onChange={(e) => setForm({ ...form, count: e.target.value })}
-              />
-              <input
-                type="text"
-                placeholder="Note"
-                className="border p-2 rounded"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              />
-            </>
-          )}
-
-          {form.category === "Other" && (
-            <>
-              <input
-                type="text"
-                placeholder="Type"
-                className="border p-2 rounded"
-                value={form.typeValue}
-                onChange={(e) =>
-                  setForm({ ...form, typeValue: e.target.value })
-                }
-              />
-              <input
-                type="text"
-                placeholder="ID"
-                className="border p-2 rounded"
-                value={form.id}
-                onChange={(e) => setForm({ ...form, id: e.target.value })}
-              />
-              <input
-                type="text"
-                placeholder="Note"
-                className="border p-2 rounded"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              />
-            </>
-          )}
-
+    <PageShell title="Equipment & Phones">
+      <div className="p-6">
+        {/* Tabs */}
+        <div className="flex border-b mb-6">
           <button
-            type="submit"
-            className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700"
+            className={`px-4 py-2 ${
+              activeTab === "Equipment"
+                ? "border-b-2 border-blue-500 font-bold"
+                : ""
+            }`}
+            onClick={() => setActiveTab("Equipment")}
           >
-            Add Equipment
+            Equipment
           </button>
-        </form>
-      </div>
-
-      {loading ? (
-        <p>Loading...</p>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {/* Left Column: Types */}
-          <div className="md:col-span-1 bg-white p-4 rounded shadow h-fit">
-            <h3 className="font-bold mb-2 text-lg">Types</h3>
-            <ul>
-              {allTypes.map((type) => (
-                <li
-                  key={type}
-                  onClick={() => setSelectedType(type)}
-                  className={`cursor-pointer p-2 rounded mb-1 ${
-                    selectedType === type
-                      ? "bg-blue-100 text-blue-700 font-semibold"
-                      : "hover:bg-gray-100"
-                  }`}
-                >
-                  {type}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Right Column: Items */}
-          <div className="md:col-span-3 bg-white p-4 rounded shadow overflow-x-auto">
-            <h3 className="font-bold mb-4 text-lg">{selectedType} List</h3>
-            <table className="min-w-full border border-gray-300">
-              <thead>
-                <tr className="bg-gray-100">
-                  {selectedType === "Phone" ? (
-                    <>
-                      <th className="py-2 px-4 border-b text-left">ID</th>
-                      <th className="py-2 px-4 border-b text-left">
-                        Phone Number
-                      </th>
-                      <th className="py-2 px-4 border-b text-left">Status</th>
-                      <th className="py-2 px-4 border-b text-left">Notes</th>
-                      <th className="py-2 px-4 border-b text-left">Actions</th>
-                    </>
-                  ) : selectedType === "Gas Card" ? (
-                    <>
-                      <th className="py-2 px-4 border-b text-left">ID</th>
-                      <th className="py-2 px-4 border-b text-left">Van</th>
-                      <th className="py-2 px-4 border-b text-left">Status</th>
-                      <th className="py-2 px-4 border-b text-left">Notes</th>
-                      <th className="py-2 px-4 border-b text-left">Actions</th>
-                    </>
-                  ) : (
-                    <>
-                      <th className="py-2 px-4 border-b text-left">
-                        ID / Count
-                      </th>
-                      <th className="py-2 px-4 border-b text-left">Status</th>
-                      <th className="py-2 px-4 border-b text-left">Notes</th>
-                      <th className="py-2 px-4 border-b text-left">Actions</th>
-                    </>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEquipment.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan="5"
-                      className="py-4 px-4 text-center text-gray-500"
-                    >
-                      No items found for {selectedType}.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredEquipment.map((item) => (
-                    <tr key={item._id} className="hover:bg-gray-50">
-                      <td className="py-2 px-4 border-b">
-                        {item.type} {item.serialNumber}
-                      </td>
-
-                      {selectedType === "Phone" && (
-                        <td className="py-2 px-4 border-b">
-                          {item.phoneNumber}
-                        </td>
-                      )}
-
-                      {selectedType === "Gas Card" && (
-                        <td className="py-2 px-4 border-b">
-                          {item.van
-                            ? item.van.vanId || item.van.vin || item.van._id
-                            : ""}
-                        </td>
-                      )}
-
-                      <td className="py-2 px-4 border-b">
-                        <span
-                          className={`px-2 py-1 rounded text-sm ${
-                            item.status === "Available"
-                              ? "bg-green-100 text-green-800"
-                              : item.status === "Missing"
-                              ? "bg-red-100 text-red-800"
-                              : "bg-yellow-100 text-yellow-800"
-                          }`}
-                        >
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="py-2 px-4 border-b">{item.notes}</td>
-                      <td className="py-2 px-4 border-b">
-                        {item.status !== "Missing" && (
-                          <button
-                            onClick={() => markMissing(item._id)}
-                            className="text-red-600 hover:underline text-sm"
-                          >
-                            Mark Missing
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <button
+            className={`px-4 py-2 ${
+              activeTab === "Phones"
+                ? "border-b-2 border-blue-500 font-bold"
+                : ""
+            }`}
+            onClick={() => setActiveTab("Phones")}
+          >
+            Phones
+          </button>
         </div>
-      )}
-    </div>
+
+        {/* Add Form */}
+        <div className="bg-white p-4 rounded shadow mb-8">
+          <h3 className="text-lg font-semibold mb-4">
+            Add New {activeTab === "Phones" ? "Phone" : "Equipment"}
+          </h3>
+          <form
+            onSubmit={handleSubmit}
+            className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"
+          >
+            {activeTab === "Equipment" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Type
+                </label>
+                <select
+                  value={form.type}
+                  onChange={(e) => setForm({ ...form, type: e.target.value })}
+                  className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
+                >
+                  <option value="Scanner">Scanner</option>
+                  <option value="Gas Card">Gas Card</option>
+                  <option value="Dolly">Dolly</option>
+                  <option value="Uniform">Uniform</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Serial Number / ID
+              </label>
+              <input
+                type="text"
+                required
+                value={form.serialNumber}
+                onChange={(e) =>
+                  setForm({ ...form, serialNumber: e.target.value })
+                }
+                className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
+              />
+            </div>
+
+            {activeTab === "Phones" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Phone Number
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={form.phoneNumber}
+                  onChange={(e) =>
+                    setForm({ ...form, phoneNumber: e.target.value })
+                  }
+                  className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Notes
+              </label>
+              <input
+                type="text"
+                value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+            >
+              Add
+            </button>
+          </form>
+        </div>
+
+        {/* List */}
+        <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                {activeTab === "Equipment" && (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Type
+                  </th>
+                )}
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Serial / ID
+                </th>
+                {activeTab === "Phones" && (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Phone Number
+                  </th>
+                )}
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Notes
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {(activeTab === "Phones" ? phones : equipment).map((item) => (
+                <tr key={item._id}>
+                  {activeTab === "Equipment" && (
+                    <td className="px-6 py-4 whitespace-nowrap">{item.type}</td>
+                  )}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {item.serialNumber}
+                  </td>
+                  {activeTab === "Phones" && (
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {item.phoneNumber}
+                    </td>
+                  )}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span
+                      className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        item.status === "Available"
+                          ? "bg-green-100 text-green-800"
+                          : "bg-red-100 text-red-800"
+                      }`}
+                    >
+                      {item.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {item.notes}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </PageShell>
   );
 };
 

@@ -2,10 +2,10 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
-import Scheduling from "./pages/Scheduling";
-import Routing from "./pages/Routing";
+import Planning from "./pages/Planning";
+import Assignments from "./pages/Assignments";
 import Employees from "./pages/Employees";
-import SchedulingCalendar from "./pages/SchedulingCalendar";
+import Scheduling from "./pages/Scheduling";
 import ManagePriority from "./pages/ManagePriority";
 import Fleet from "./pages/Fleet";
 import Vans from "./pages/Vans";
@@ -38,12 +38,11 @@ function App() {
           <Route path="/" element={<Dashboard />} />
 
           {/* Scheduling Routes */}
-          <Route path="/scheduling" element={<Scheduling />} />
-          <Route path="/scheduling/routing" element={<Routing />} />
-          <Route path="/scheduling/employees" element={<Employees />} />
-          <Route path="/scheduling/calendar" element={<SchedulingCalendar />} />
-          <Route path="/scheduling/manage" element={<ManagePriority />} />
-
+          <Route path="/planning" element={<Planning />} />
+          <Route path="/planning/assignments" element={<Assignments />} />
+          <Route path="/planning/employees" element={<Employees />} />
+          <Route path="/planning/scheduling" element={<Scheduling />} />
+          <Route path="/planning/manage" element={<ManagePriority />} />
           {/* Fleet Routes */}
           <Route path="/fleet" element={<Fleet />} />
           <Route path="/fleet/vans" element={<Vans />} />
