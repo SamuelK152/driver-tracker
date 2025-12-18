@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Employee = require('../models/Employee');
 const EmployeeTraining = require('../models/EmployeeTraining');
-const EmployeePreferences = require('../models/EmployeePreferences');
+const ItemPreference = require('../models/ItemPreference');
 const asyncHandler = require('../utils/asyncHandler');
 
 // Get all employees
@@ -74,20 +74,81 @@ router.post('/:id/training', asyncHandler(async (req, res) => {
 
 // Get employee preferences
 router.get('/:id/preferences', asyncHandler(async (req, res) => {
-    const preferences = await EmployeePreferences.findOne({ employeeId: req.params.id })
-        .populate('preferredVans')
-        .populate('preferredEquipment')
-        .populate('preferredServiceTypes');
-    res.json(preferences || {});
+    const itemPrefs = await ItemPreference.find({ employees: req.params.id })
+        .populate('pref');
+
+    const preferences = {
+        preferredVans: [],
+        preferredEquipment: [],
+        preferredServiceTypes: []
+    };
+
+    itemPrefs.forEach(p => {
+        if (p.onModel === 'Van') preferences.preferredVans.push(p.pref);
+        if (p.onModel === 'Equipment') preferences.preferredEquipment.push(p.pref);
+        if (p.onModel === 'ServiceType') preferences.preferredServiceTypes.push(p.pref);
+    });
+
+    res.json(preferences);
 }));
 
 // Update employee preferences
 router.put('/:id/preferences', asyncHandler(async (req, res) => {
-    const preferences = await EmployeePreferences.findOneAndUpdate(
-        { employeeId: req.params.id },
-        req.body,
-        { new: true, upsert: true }
-    );
+    const { preferredVans, preferredEquipment, preferredServiceTypes } = req.body;
+    const employeeId = req.params.id;
+
+    const updateTypePreferences = async (newIds, type) => {
+        if (!newIds) return;
+
+        // 1. Remove employee from all items of this type NOT in newIds
+        const currentPrefs = await ItemPreference.find({
+            onModel: type,
+            employees: employeeId
+        });
+
+        for (const doc of currentPrefs) {
+            const prefId = doc.pref.toString();
+            if (!newIds.includes(prefId)) {
+                doc.employees = doc.employees.filter(e => e.toString() !== employeeId);
+                await doc.save();
+            }
+        }
+
+        // 2. Add employee to all items in newIds
+        for (const id of newIds) {
+            let doc = await ItemPreference.findOne({ pref: id, onModel: type });
+            if (!doc) {
+                doc = await ItemPreference.create({
+                    pref: id,
+                    onModel: type,
+                    employees: [employeeId]
+                });
+            } else {
+                if (!doc.employees.map(e => e.toString()).includes(employeeId)) {
+                    doc.employees.push(employeeId);
+                    await doc.save();
+                }
+            }
+        }
+    };
+
+    await updateTypePreferences(preferredVans, 'Van');
+    await updateTypePreferences(preferredEquipment, 'Equipment');
+    await updateTypePreferences(preferredServiceTypes, 'ServiceType');
+
+    // Return updated structure
+    const itemPrefs = await ItemPreference.find({ employees: employeeId }).populate('pref');
+    const preferences = {
+        preferredVans: [],
+        preferredEquipment: [],
+        preferredServiceTypes: []
+    };
+    itemPrefs.forEach(p => {
+        if (p.onModel === 'Van') preferences.preferredVans.push(p.pref);
+        if (p.onModel === 'Equipment') preferences.preferredEquipment.push(p.pref);
+        if (p.onModel === 'ServiceType') preferences.preferredServiceTypes.push(p.pref);
+    });
+
     res.json(preferences);
 }));
 

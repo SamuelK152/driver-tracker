@@ -27,6 +27,7 @@ app.use('/api/plans', require('./routes/plans'));
 app.use('/api/routes', require('./routes/dailyRoutes'));
 app.use('/api/metrics', require('./routes/metrics'));
 app.use('/api/service-types', require('./routes/serviceTypes'));
+app.use('/api/preferences', require('./routes/preferences'));
 app.use('/api/config', require('./routes/config'));
 
 // Centralized error handler
