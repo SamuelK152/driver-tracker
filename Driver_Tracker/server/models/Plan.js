@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const PlanSchema = new mongoose.Schema({
     date: { type: Date, required: true, unique: true },
     routeCommitment: { type: Number, default: 0 },
+    requirements: { type: Map, of: Number, default: {} },
     startTime: Date,
     roster: [{
         employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },

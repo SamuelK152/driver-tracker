@@ -6,7 +6,9 @@ import Planning from "./pages/Planning";
 import Assignments from "./pages/Assignments";
 import Employees from "./pages/Employees";
 import Scheduling from "./pages/Scheduling";
-import ManagePriority from "./pages/ManagePriority";
+import PlanningManage from "./pages/PlanningManage";
+import PreferencePriority from "./pages/PreferencePriority";
+import CustomPositions from "./pages/CustomPositions";
 import Fleet from "./pages/Fleet";
 import Vans from "./pages/Vans";
 import Equipment from "./pages/Equipment";
@@ -20,6 +22,8 @@ import Options from "./pages/Options";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navigation from "./components/Navigation";
 
+import DetailedScheduling from "./pages/DetailedScheduling";
+
 function App() {
   return (
     <Router>
@@ -29,6 +33,7 @@ function App() {
 
         {/* Protected Routes wrapped in Navigation */}
         <Route
+          path="/"
           element={
             <ProtectedRoute>
               <Navigation />
@@ -41,8 +46,20 @@ function App() {
           <Route path="/planning" element={<Planning />} />
           <Route path="/planning/assignments" element={<Assignments />} />
           <Route path="/planning/employees" element={<Employees />} />
+          <Route
+            path="/planning/detailed-scheduling/:date"
+            element={<DetailedScheduling />}
+          />
           <Route path="/planning/scheduling" element={<Scheduling />} />
-          <Route path="/planning/manage" element={<ManagePriority />} />
+          <Route path="/planning/manage" element={<PlanningManage />} />
+          <Route
+            path="/planning/manage/priority"
+            element={<PreferencePriority />}
+          />
+          <Route
+            path="/planning/manage/positions"
+            element={<CustomPositions />}
+          />
           {/* Fleet Routes */}
           <Route path="/fleet" element={<Fleet />} />
           <Route path="/fleet/vans" element={<Vans />} />
