@@ -1,9 +1,16 @@
 import PageShell from "../lib/PageShell";
+import DetailedView from "../components/DetailedView";
 
 const Planning = () => {
   return (
     <PageShell title="Planning Overview">
-      <p>Planning Dashboard Placeholder</p>
+      <DetailedView
+        summary={<p>Planning Summary Placeholder</p>}
+        leftPanel={<p>Planning Left Panel Placeholder</p>}
+        rightPanel={<p>Planning Right Panel Placeholder</p>}
+      >
+        <p className="mb-4">Planning Dashboard Content</p>
+      </DetailedView>
     </PageShell>
   );
 };

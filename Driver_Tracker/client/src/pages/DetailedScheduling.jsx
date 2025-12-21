@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useApi } from "../lib/useApi";
 import PageShell from "../lib/PageShell";
+import DetailedView from "../components/DetailedView";
 import {
   ArrowLeft,
   Users,
@@ -399,218 +400,224 @@ const DetailedScheduling = () => {
 
   return (
     <PageShell title="Detailed Scheduling">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <button
-          onClick={() =>
-            navigate("/planning/scheduling", {
-              state: { date: currentDate.toISOString() },
-            })
-          }
-          className="flex items-center text-gray-600 hover:text-gray-900"
-        >
-          <ArrowLeft className="w-5 h-5 mr-2" />
-          Back to Month View
-        </button>
-        <h2 className="text-2xl font-bold">{currentDate.toDateString()}</h2>
-        <button
-          onClick={handleSave}
-          className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-        >
-          Save Changes
-        </button>
-      </div>
-
-      {/* Week View */}
-      <div className="grid grid-cols-7 gap-2 mb-6">
-        {weekDates.map((date) => {
-          const isSelected = date.toDateString() === currentDate.toDateString();
-          const stats = getDayStats(date);
-          return (
-            <div
-              key={date.toISOString()}
-              onClick={() => setCurrentDate(date)}
-              className={`p-3 rounded border cursor-pointer transition-colors ${
-                isSelected
-                  ? "bg-blue-50 border-blue-500 ring-2 ring-blue-200"
-                  : "bg-white hover:bg-gray-50"
-              }`}
-            >
-              <div className="font-bold text-center mb-2">
-                {getDayName(date).slice(0, 3)} {date.getDate()}
-              </div>
-              <div className="text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Drivers:</span>
-                  <span className="font-medium">{stats.drivers}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Reqs:</span>
-                  <span className="font-medium">{stats.commitment}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Totals & Requirements */}
-      <div className="bg-white p-4 rounded shadow mb-6">
-        <div className="flex items-center space-x-8 mb-4">
-          <div>
-            <span className="text-gray-500 block text-sm">Total Drivers</span>
-            <span className="text-2xl font-bold">
-              {roster.filter((r) => r.isWorking).length}
-            </span>
-          </div>
-          <div>
-            <span className="text-gray-500 block text-sm">
-              Total Requirements
-            </span>
-            <span className="text-2xl font-bold">
-              {Object.values(requirements).reduce((a, b) => a + b, 0)}
-            </span>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {uniqueServiceTypes.map((type) => (
-            <button
-              key={type}
-              onClick={() => openServiceTypeModal(type)}
-              className={`px-3 py-1 rounded border text-sm flex items-center space-x-2 ${
-                requirements[type] > 0
-                  ? "bg-blue-100 border-blue-300 text-blue-800"
-                  : "bg-gray-50 text-gray-600"
-              }`}
-            >
-              <span>{type}</span>
-              <span className="font-bold bg-white px-1.5 rounded border">
-                {requirements[type] || 0}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Alerts */}
-      <div className="space-y-2 mb-6">
-        {alerts.map((alert, idx) => (
-          <div
-            key={idx}
-            className={`p-3 rounded border ${
-              alert.type === "error"
-                ? "bg-red-50 border-red-200 text-red-700"
-                : "bg-blue-50 border-blue-200 text-blue-700"
-            }`}
-          >
-            {alert.message}
-          </div>
-        ))}
-      </div>
-
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: Roster */}
-        <div className="bg-white rounded shadow p-4">
-          <h3 className="font-bold text-lg mb-4 flex items-center">
-            <Users className="w-5 h-5 mr-2" />
-            Roster
-          </h3>
-          <div className="space-y-2 max-h-[600px] overflow-y-auto">
-            <div className="grid grid-cols-12 gap-2 font-bold text-sm text-gray-500 border-b pb-2">
-              <div className="col-span-1"></div>
-              <div className="col-span-6">Name</div>
-              <div className="col-span-5">Position</div>
-            </div>
-            {roster.map((item, idx) => (
-              <div
-                key={item.driverId}
-                className="grid grid-cols-12 gap-2 items-center py-1 border-b last:border-0"
+      <DetailedView
+        summary={
+          <>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-6">
+              <button
+                onClick={() =>
+                  navigate("/planning/scheduling", {
+                    state: { date: currentDate.toISOString() },
+                  })
+                }
+                className="flex items-center text-gray-600 hover:text-gray-900"
               >
-                <div className="col-span-1 flex justify-center">
-                  <input
-                    type="checkbox"
-                    checked={item.isWorking}
-                    onChange={(e) => {
-                      const newRoster = [...roster];
-                      newRoster[idx].isWorking = e.target.checked;
-                      setRoster(newRoster);
-                    }}
-                    className="w-4 h-4 text-blue-600 rounded"
-                  />
-                </div>
-                <div className="col-span-6 truncate font-medium">
-                  {item.name}
-                </div>
-                <div className="col-span-5">
-                  <select
-                    value={item.position}
-                    onChange={(e) => {
-                      const newRoster = [...roster];
-                      newRoster[idx].position = e.target.value;
-                      setRoster(newRoster);
-                    }}
-                    disabled={!item.isWorking}
-                    className="w-full text-sm border rounded p-1"
-                  >
-                    <option value="Driver">Driver</option>
-                    {customPositions.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+                <ArrowLeft className="w-5 h-5 mr-2" />
+                Back to Month View
+              </button>
+              <h2 className="text-2xl font-bold">
+                {currentDate.toDateString()}
+              </h2>
+              <button
+                onClick={handleSave}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+              >
+                Save Changes
+              </button>
+            </div>
 
-        {/* Right: Estimated Assignments */}
-        <div className="bg-white rounded shadow p-4">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-lg flex items-center">
-              <Truck className="w-5 h-5 mr-2" />
-              Estimated Assignments
-            </h3>
-          </div>
-
-          <div className="space-y-2 max-h-[600px] overflow-y-auto">
-            {assignments.length === 0 ? (
-              <div className="text-center text-gray-500 py-8">
-                No assignments generated. Ensure drivers are working and
-                requirements are set.
-              </div>
-            ) : (
-              assignments.map((assign, idx) => {
-                const driver = employees.find((d) => d._id === assign.driverId);
-                const van = vans.find((v) => v._id === assign.vanId);
-                const phone = equipment.find((e) => e._id === assign.phoneId);
+            {/* Week View */}
+            <div className="grid grid-cols-7 gap-2 mb-6">
+              {weekDates.map((date) => {
+                const isSelected =
+                  date.toDateString() === currentDate.toDateString();
+                const stats = getDayStats(date);
                 return (
                   <div
-                    key={idx}
-                    className="p-3 border rounded bg-gray-50 text-sm"
+                    key={date.toISOString()}
+                    onClick={() => setCurrentDate(date)}
+                    className={`p-3 rounded border cursor-pointer transition-colors ${
+                      isSelected
+                        ? "bg-blue-50 border-blue-500 ring-2 ring-blue-200"
+                        : "bg-white hover:bg-gray-50"
+                    }`}
                   >
-                    <div className="font-bold text-gray-900 mb-1">
-                      {driver?.name}
+                    <div className="font-bold text-center mb-2">
+                      {getDayName(date).slice(0, 3)} {date.getDate()}
                     </div>
-                    <div className="flex justify-between text-gray-600">
-                      <span className="flex items-center">
-                        <Truck className="w-3 h-3 mr-1" /> {van?.vanId} (
-                        {van?.serviceType})
-                      </span>
-                      <span className="flex items-center">
-                        <Smartphone className="w-3 h-3 mr-1" /> {phone?.type}{" "}
-                        {phone?.serialNumber}
-                      </span>
+                    <div className="text-xs space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Drivers:</span>
+                        <span className="font-medium">{stats.drivers}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Reqs:</span>
+                        <span className="font-medium">{stats.commitment}</span>
+                      </div>
                     </div>
                   </div>
                 );
-              })
-            )}
+              })}
+            </div>
+            <div className="flex items-center space-x-8 mb-4">
+              <div>
+                <span className="text-gray-500 block text-sm">
+                  Total Drivers
+                </span>
+                <span className="text-2xl font-bold">
+                  {roster.filter((r) => r.isWorking).length}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block text-sm">
+                  Total Requirements
+                </span>
+                <span className="text-2xl font-bold">
+                  {Object.values(requirements).reduce((a, b) => a + b, 0)}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {uniqueServiceTypes.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => openServiceTypeModal(type)}
+                  className={`px-3 py-1 rounded border text-sm flex items-center space-x-2 ${
+                    requirements[type] > 0
+                      ? "bg-blue-100 border-blue-300 text-blue-800"
+                      : "bg-gray-50 text-gray-600"
+                  }`}
+                >
+                  <span>{type}</span>
+                  <span className="font-bold bg-white px-1.5 rounded border">
+                    {requirements[type] || 0}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        }
+        alerts={
+          <div className="space-y-2">
+            {alerts.map((alert, idx) => (
+              <div
+                key={idx}
+                className={`p-3 rounded border ${
+                  alert.type === "error"
+                    ? "bg-red-50 border-red-200 text-red-700"
+                    : "bg-blue-50 border-blue-200 text-blue-700"
+                }`}
+              >
+                {alert.message}
+              </div>
+            ))}
           </div>
-        </div>
-      </div>
+        }
+        leftPanel={
+          <>
+            <h3 className="font-bold text-lg mb-4 flex items-center">
+              <Users className="w-5 h-5 mr-2" />
+              Roster
+            </h3>
+            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              <div className="grid grid-cols-12 gap-2 font-bold text-sm text-gray-500 border-b pb-2">
+                <div className="col-span-1"></div>
+                <div className="col-span-6">Name</div>
+                <div className="col-span-5">Position</div>
+              </div>
+              {roster.map((item, idx) => (
+                <div
+                  key={item.driverId}
+                  className="grid grid-cols-12 gap-2 items-center py-1 border-b last:border-0"
+                >
+                  <div className="col-span-1 flex justify-center">
+                    <input
+                      type="checkbox"
+                      checked={item.isWorking}
+                      onChange={(e) => {
+                        const newRoster = [...roster];
+                        newRoster[idx].isWorking = e.target.checked;
+                        setRoster(newRoster);
+                      }}
+                      className="w-4 h-4 text-blue-600 rounded"
+                    />
+                  </div>
+                  <div className="col-span-6 truncate font-medium">
+                    {item.name}
+                  </div>
+                  <div className="col-span-5">
+                    <select
+                      value={item.position}
+                      onChange={(e) => {
+                        const newRoster = [...roster];
+                        newRoster[idx].position = e.target.value;
+                        setRoster(newRoster);
+                      }}
+                      disabled={!item.isWorking}
+                      className="w-full text-sm border rounded p-1"
+                    >
+                      <option value="Driver">Driver</option>
+                      {customPositions.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        }
+        rightPanel={
+          <>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-lg flex items-center">
+                <Truck className="w-5 h-5 mr-2" />
+                Estimated Assignments
+              </h3>
+            </div>
+
+            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              {assignments.length === 0 ? (
+                <div className="text-center text-gray-500 py-8">
+                  No assignments generated. Ensure drivers are working and
+                  requirements are set.
+                </div>
+              ) : (
+                assignments.map((assign, idx) => {
+                  const driver = employees.find(
+                    (d) => d._id === assign.driverId
+                  );
+                  const van = vans.find((v) => v._id === assign.vanId);
+                  const phone = equipment.find((e) => e._id === assign.phoneId);
+                  return (
+                    <div
+                      key={idx}
+                      className="p-3 border rounded bg-gray-50 text-sm"
+                    >
+                      <div className="font-bold text-gray-900 mb-1">
+                        {driver?.name}
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span className="flex items-center">
+                          <Truck className="w-3 h-3 mr-1" /> {van?.vanId} (
+                          {van?.serviceType})
+                        </span>
+                        <span className="flex items-center">
+                          <Smartphone className="w-3 h-3 mr-1" /> {phone?.type}{" "}
+                          {phone?.serialNumber}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </>
+        }
+      ></DetailedView>
 
       {/* Service Type Modal */}
       {isModalOpen && (
