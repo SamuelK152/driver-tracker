@@ -8,9 +8,7 @@ const Fleet = () => {
         summary={<p>Fleet Summary Placeholder</p>}
         leftPanel={<p>Fleet Left Panel Placeholder</p>}
         rightPanel={<p>Fleet Right Panel Placeholder</p>}
-      >
-        <p className="mb-4">Fleet Dashboard Content</p>
-      </DetailedView>
+      ></DetailedView>
     </PageShell>
   );
 };

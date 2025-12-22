@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Planning from "./pages/Planning";
 import Assignments from "./pages/Assignments";
 import Employees from "./pages/Employees";
+import EmployeeDetailed from "./pages/EmployeeDetailed";
 import Scheduling from "./pages/Scheduling";
 import PlanningManage from "./pages/PlanningManage";
 import PreferencePriority from "./pages/PreferencePriority";
@@ -46,6 +47,7 @@ function App() {
           <Route path="/planning" element={<Planning />} />
           <Route path="/planning/assignments" element={<Assignments />} />
           <Route path="/planning/employees" element={<Employees />} />
+          <Route path="/employees/:id" element={<EmployeeDetailed />} />
           <Route
             path="/planning/detailed-scheduling/:date"
             element={<DetailedScheduling />}

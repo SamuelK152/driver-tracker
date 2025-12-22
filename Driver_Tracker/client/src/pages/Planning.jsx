@@ -8,9 +8,7 @@ const Planning = () => {
         summary={<p>Planning Summary Placeholder</p>}
         leftPanel={<p>Planning Left Panel Placeholder</p>}
         rightPanel={<p>Planning Right Panel Placeholder</p>}
-      >
-        <p className="mb-4">Planning Dashboard Content</p>
-      </DetailedView>
+      ></DetailedView>
     </PageShell>
   );
 };
