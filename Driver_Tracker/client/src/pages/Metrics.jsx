@@ -1,6 +1,458 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import apiClient from "../lib/apiClient";
+import DetailedView from "../components/DetailedView";
+
+const getWeekNumber = (d) => {
+  if (!d) return 0;
+  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+};
+
+const getMonthsInYear = (year) => {
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    months.push(new Date(year, i, 1));
+  }
+  return months;
+};
+
+const getWeeksInMonth = (year, month) => {
+  const weeks = [];
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+
+  let d = new Date(firstDay);
+  d.setDate(d.getDate() - d.getDay()); // Start at Sunday
+
+  while (d <= lastDay) {
+    const start = new Date(d);
+    const end = new Date(d);
+    end.setDate(end.getDate() + 6);
+
+    if (start <= lastDay && end >= firstDay) {
+      weeks.push({ start, end });
+    }
+    d.setDate(d.getDate() + 7);
+  }
+  return weeks;
+};
+
+const getDaysInWeek = (startOfWeek) => {
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(startOfWeek);
+    d.setDate(d.getDate() + i);
+    days.push(d);
+  }
+  return days;
+};
+
+const CalendarNavigation = ({
+  viewMode,
+  currentDate,
+  onDateSelect,
+  onViewChange,
+  onNavigate,
+  data = [],
+  targetClockOutTime = "20:05",
+}) => {
+  const monthNames = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+
+  const getMetrics = (date) => {
+    const dateStr = date.toLocaleDateString();
+    const item = data.find(
+      (d) => new Date(d.date).toLocaleDateString() === dateStr
+    );
+    if (!item) return null;
+
+    let diff = item.targetDiff;
+    if (diff === undefined && item.signOut) {
+      const timeRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/;
+      const match = item.signOut.match(timeRegex);
+      if (match) {
+        let hours = parseInt(match[1]);
+        const minutes = parseInt(match[2]);
+        const period = match[4] ? match[4].toUpperCase() : null;
+        if (period === "PM" && hours !== 12) hours += 12;
+        if (period === "AM" && hours === 12) hours = 0;
+
+        const [tH, tM] = targetClockOutTime.split(":").map(Number);
+        const deadline = tH * 60 + tM;
+        const current = hours * 60 + minutes;
+        diff = current - deadline;
+      } else {
+        diff = 0;
+      }
+    }
+    return { ...item, targetDiff: diff };
+  };
+
+  const renderHeader = () => {
+    const getOrdinal = (n) => {
+      const s = ["th", "st", "nd", "rd"];
+      const v = n % 100;
+      return s[(v - 20) % 10] || s[v] || s[0];
+    };
+
+    const year = currentDate.getFullYear();
+    const month = currentDate.toLocaleDateString(undefined, { month: "long" });
+
+    let weekNum = getWeekNumber(currentDate);
+    if (viewMode === "week") {
+      const d = new Date(currentDate);
+      const dayOfWeek = d.getDay();
+      const targetMonday = new Date(d);
+      targetMonday.setDate(d.getDate() - dayOfWeek + 1);
+      weekNum = getWeekNumber(targetMonday);
+    }
+
+    const day = currentDate.getDate();
+
+    // Breadcrumb items
+    const breadcrumbs = [];
+
+    // Year is always the root
+    breadcrumbs.push({
+      label: year,
+      onClick: () => onViewChange("year"),
+      active: viewMode === "year",
+    });
+
+    if (viewMode === "month" || viewMode === "week" || viewMode === "day") {
+      breadcrumbs.push({
+        label: month,
+        onClick: () => onViewChange("month"),
+        active: viewMode === "month",
+      });
+    }
+
+    if (viewMode === "week" || viewMode === "day") {
+      breadcrumbs.push({
+        label: `Week ${weekNum}`,
+        onClick: () => onViewChange("week"),
+        active: viewMode === "week",
+      });
+    }
+
+    if (viewMode === "day") {
+      breadcrumbs.push({
+        label: `${day}${getOrdinal(day)}`,
+        onClick: () => {},
+        active: true,
+      });
+    }
+
+    // Title logic
+    let title = "";
+    if (viewMode === "year") title = year;
+    else if (viewMode === "month") title = `${month} ${year}`;
+    else if (viewMode === "week") {
+      const d = new Date(currentDate);
+      const dayOfWeek = d.getDay();
+      const start = new Date(d);
+      start.setDate(d.getDate() - dayOfWeek);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      title = `${start.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })} - ${end.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}`;
+    } else if (viewMode === "day") {
+      title = currentDate.toLocaleDateString(undefined, {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+    }
+
+    return (
+      <div className="mb-4">
+        <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+          {breadcrumbs.map((item, index) => (
+            <div key={index} className="flex items-center">
+              {index > 0 && <span className="mx-1 text-gray-400">&gt;</span>}
+              <button
+                onClick={item.onClick}
+                disabled={item.active}
+                className={`${
+                  item.active
+                    ? "font-bold text-gray-800 cursor-default"
+                    : "hover:text-blue-600 hover:underline"
+                }`}
+              >
+                {item.label}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-between items-center">
+          <button
+            onClick={() => onNavigate(-1)}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+          >
+            &larr; Previous
+          </button>
+          <div className="font-bold text-xl text-gray-800">{title}</div>
+          <button
+            onClick={() => onNavigate(1)}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+          >
+            Next &rarr;
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderDayCard = (date, isCurrentMonth = true) => {
+    if (!date)
+      return (
+        <div className="bg-gray-50/50 rounded border border-transparent"></div>
+      );
+
+    const metrics = getMetrics(date);
+    const isToday = date.toDateString() === new Date().toDateString();
+    const isSelected =
+      viewMode === "day" && date.toDateString() === currentDate.toDateString();
+    const isMonthView = viewMode === "month";
+
+    return (
+      <div
+        className={`rounded border cursor-pointer transition-all flex flex-col justify-between ${
+          isMonthView ? "p-1 h-16" : "p-2 h-24"
+        } ${
+          isSelected
+            ? "bg-blue-100 border-blue-600 ring-2 ring-blue-400 shadow-md"
+            : isToday
+            ? "bg-blue-50 border-blue-500 ring-1 ring-blue-200"
+            : isCurrentMonth
+            ? "bg-white border-gray-200 hover:border-blue-300 hover:shadow-sm"
+            : "bg-gray-50 border-gray-100 text-gray-400"
+        }`}
+        onClick={() => {
+          if (viewMode === "month") {
+            onDateSelect(date, "day");
+          } else if (viewMode === "week" || viewMode === "day") {
+            onDateSelect(date, "day");
+          }
+        }}
+      >
+        <div
+          className={`font-bold text-center text-sm ${
+            isSelected
+              ? "text-blue-900"
+              : isToday
+              ? "text-blue-700"
+              : "text-gray-700"
+          }`}
+        >
+          {(viewMode === "week" || viewMode === "day") && (
+            <span className="mr-1">
+              {date.toLocaleDateString(undefined, { weekday: "short" })}
+            </span>
+          )}
+          {date.getDate()}
+        </div>
+
+        {metrics ? (
+          <div className="text-[10px]">
+            {isMonthView ? (
+              <>
+                <div className="flex justify-between px-1">
+                  <span title="Stops">S:{metrics.stopsComplete}</span>
+                  <span title="Packages">P:{metrics.totalPackages}</span>
+                </div>
+                <div
+                  className={`text-center font-medium ${
+                    metrics.targetDiff > 0 ? "text-red-600" : "text-green-600"
+                  }`}
+                >
+                  {metrics.targetDiff > 0 ? "+" : ""}
+                  {Math.floor(metrics.targetDiff || 0)}m
+                </div>
+              </>
+            ) : (
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Stops</span>
+                  <span className="font-medium">{metrics.stopsComplete}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Pkgs</span>
+                  <span className="font-medium">{metrics.totalPackages}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Net</span>
+                  <span
+                    className={`font-medium ${
+                      metrics.targetDiff > 0 ? "text-red-600" : "text-green-600"
+                    }`}
+                  >
+                    {metrics.targetDiff > 0 ? "+" : ""}
+                    {Math.floor(metrics.targetDiff || 0)}m
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <span className="text-gray-300 text-xs">-</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderWeekView = () => {
+    // If viewMode is 'day', currentDate is the selected day.
+    // We want to show the week containing that day.
+    const d = new Date(currentDate);
+    const day = d.getDay();
+    const startOfWeek = new Date(d);
+    startOfWeek.setDate(d.getDate() - day);
+
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startOfWeek);
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+
+    return (
+      <div className="grid grid-cols-7 gap-2">
+        {days.map((d, i) => (
+          <div key={i}>{renderDayCard(d)}</div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderMonthView = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startDay = firstDay.getDay();
+
+    const days = [];
+    // Padding for start
+    for (let i = 0; i < startDay; i++) {
+      const d = new Date(year, month, 0 - (startDay - 1 - i));
+      days.push({ date: d, isCurrentMonth: false });
+    }
+    // Days in month
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push({ date: new Date(year, month, i), isCurrentMonth: true });
+    }
+    // Padding for end (to complete rows)
+    const remaining = 7 - (days.length % 7);
+    if (remaining < 7) {
+      for (let i = 1; i <= remaining; i++) {
+        days.push({
+          date: new Date(year, month + 1, i),
+          isCurrentMonth: false,
+        });
+      }
+    }
+
+    // Chunk into weeks
+    const weeks = [];
+    for (let i = 0; i < days.length; i += 7) {
+      weeks.push(days.slice(i, i + 7));
+    }
+
+    return (
+      <div>
+        <div className="grid grid-cols-[3rem_repeat(7,1fr)] gap-2 text-center mb-2">
+          <div className="text-xs font-bold text-gray-400 uppercase tracking-wide flex items-center justify-center">
+            Wk
+          </div>
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <div
+              key={d}
+              className="text-xs font-bold text-gray-500 uppercase tracking-wide"
+            >
+              {d}
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-[3rem_repeat(7,1fr)] gap-2">
+          {weeks.map((week, weekIndex) => {
+            const weekNum = getWeekNumber(week[1].date);
+            return (
+              <div key={weekIndex} className="contents">
+                <div
+                  className="flex items-center justify-center font-bold text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded cursor-pointer transition-colors text-sm"
+                  onClick={() => {
+                    onDateSelect(week[1].date, "week");
+                  }}
+                  title={`View Week ${weekNum}`}
+                >
+                  {weekNum}
+                </div>
+                {week.map((d, i) => (
+                  <div key={i}>{renderDayCard(d.date, d.isCurrentMonth)}</div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderYearView = () => {
+    return (
+      <div className="grid grid-cols-4 gap-4">
+        {monthNames.map((name, index) => (
+          <div
+            key={name}
+            className="p-4 border rounded-lg hover:bg-blue-50 hover:border-blue-200 cursor-pointer text-center transition-all shadow-sm hover:shadow-md bg-white"
+            onClick={() => {
+              const d = new Date(currentDate.getFullYear(), index, 1);
+              onDateSelect(d, "month");
+            }}
+          >
+            <div className="font-bold text-gray-800">{name}</div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-sm mb-6">
+      {renderHeader()}
+      {(viewMode === "week" || viewMode === "day") && renderWeekView()}
+      {viewMode === "month" && renderMonthView()}
+      {viewMode === "year" && renderYearView()}
+    </div>
+  );
+};
 
 const MetricsGraph = ({
   data,
@@ -14,6 +466,8 @@ const MetricsGraph = ({
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const containerRef = useRef(null);
   const [width, setWidth] = useState(800);
+
+  const [activeTab, setActiveTab] = useState("table");
 
   useEffect(() => {
     const handleResize = () => {
@@ -41,6 +495,12 @@ const MetricsGraph = ({
       const year = startDate.getFullYear();
       const month = startDate.getMonth();
       daysCount = new Date(year, month + 1, 0).getDate();
+    } else if (timeRange === "year") {
+      const year = startDate.getFullYear();
+      daysCount =
+        (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 366 : 365;
+    } else if (timeRange === "day") {
+      daysCount = 1;
     }
 
     for (let i = 0; i < daysCount; i++) {
@@ -72,6 +532,14 @@ const MetricsGraph = ({
         }
       }
 
+      if (timeRange === "year") {
+        if (date.getDate() === 1) {
+          label = date.toLocaleDateString(undefined, { month: "short" });
+        } else {
+          label = "";
+        }
+      }
+
       // Helper to get minutes (copied from original)
       const getMinutes = (signOut) => {
         if (!signOut) return 0;
@@ -97,6 +565,11 @@ const MetricsGraph = ({
         date:
           timeRange === "month"
             ? date.getDate().toString()
+            : timeRange === "year"
+            ? date.toLocaleDateString(undefined, {
+                month: "numeric",
+                day: "numeric",
+              })
             : date.toLocaleDateString(undefined, {
                 month: "numeric",
                 day: "numeric",
@@ -442,13 +915,17 @@ const MetricsGraph = ({
 
 const History = () => {
   const location = useLocation();
-  const [viewMode, setViewMode] = useState("drivers"); // 'drivers', 'routes', 'dates'
+  const navigate = useNavigate();
+  const [viewMode, setViewMode] = useState("dates"); // Default to dates
   const [listData, setListData] = useState([]);
+  const [driverList, setDriverList] = useState([]);
+  const [selectedDriverFilter, setSelectedDriverFilter] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [history, setHistory] = useState([]);
   const [timeRange, setTimeRange] = useState("week");
   const [currentPeriodStart, setCurrentPeriodStart] = useState(null);
   const [targetClockOutTime, setTargetClockOutTime] = useState("20:05");
+  const [activeTab, setActiveTab] = useState("table");
 
   // Date Navigation State
   const [dateNav, setDateNav] = useState({
@@ -460,6 +937,20 @@ const History = () => {
   });
   const [availableDates, setAvailableDates] = useState([]);
   const [summaryData, setSummaryData] = useState([]);
+
+  useEffect(() => {
+    const fetchDrivers = async () => {
+      try {
+        const { data } = await apiClient.get("/api/metrics/list");
+        setDriverList(
+          data.sort((a, b) => a.driverName.localeCompare(b.driverName))
+        );
+      } catch (error) {
+        console.error("Error fetching drivers:", error);
+      }
+    };
+    fetchDrivers();
+  }, []);
 
   const getStartOfWeek = (date) => {
     const d = new Date(date);
@@ -474,6 +965,11 @@ const History = () => {
   const getStartOfMonth = (date) => {
     const d = new Date(date);
     return new Date(d.getFullYear(), d.getMonth(), 1);
+  };
+
+  const getStartOfYear = (date) => {
+    const d = new Date(date);
+    return new Date(d.getFullYear(), 0, 1);
   };
 
   useEffect(() => {
@@ -517,6 +1013,8 @@ const History = () => {
         setCurrentPeriodStart(getStartOfWeek(currentPeriodStart));
       } else if (timeRange === "month") {
         setCurrentPeriodStart(getStartOfMonth(currentPeriodStart));
+      } else if (timeRange === "year") {
+        setCurrentPeriodStart(getStartOfYear(currentPeriodStart));
       }
     }
   }, [timeRange]);
@@ -541,8 +1039,44 @@ const History = () => {
       weekStart: null,
       day: null,
     });
+
+    // Initialize calendar for dates view
+    if (viewMode === "dates" || viewMode === "rescues") {
+      if (!currentPeriodStart) {
+        setCurrentPeriodStart(getStartOfWeek(new Date()));
+      }
+    }
+
     fetchListData();
   }, [viewMode]);
+
+  // Fetch summary when calendar changes in dates view
+  useEffect(() => {
+    if (
+      (viewMode === "dates" || viewMode === "rescues") &&
+      currentPeriodStart
+    ) {
+      let start = new Date(currentPeriodStart);
+      let end = new Date(currentPeriodStart);
+
+      if (timeRange === "week") {
+        end.setDate(end.getDate() + 6);
+      } else if (timeRange === "month") {
+        end.setMonth(end.getMonth() + 1);
+        end.setDate(0);
+      } else if (timeRange === "year") {
+        end.setFullYear(end.getFullYear() + 1);
+        end.setDate(0);
+      } else if (timeRange === "day") {
+        // end is same as start for day view
+      }
+
+      // Set end of day
+      end.setHours(23, 59, 59, 999);
+
+      fetchSummary(start, end);
+    }
+  }, [viewMode, currentPeriodStart, timeRange]);
 
   const fetchListData = async () => {
     try {
@@ -616,6 +1150,7 @@ const History = () => {
       }));
 
       setSummaryData(result);
+      setHistory(data); // Store raw data
     } catch (error) {
       console.error("Error fetching summary:", error);
     }
@@ -776,216 +1311,142 @@ const History = () => {
   };
 
   const renderList = () => {
-    if (viewMode === "dates" || viewMode === "rescues") {
-      // Date Navigation Logic
-      let items = [];
-      let onClick = () => {};
-      let backButton = null;
+    const currentYear = currentPeriodStart
+      ? currentPeriodStart.getFullYear()
+      : new Date().getFullYear();
+    const currentMonth = currentPeriodStart
+      ? currentPeriodStart.getMonth()
+      : new Date().getMonth();
 
-      if (dateNav.level === "year") {
-        // Extract unique years
-        const years = [
-          ...new Set(
-            availableDates.map((d) => parseLocalDate(d).getFullYear())
-          ),
-        ].sort((a, b) => b - a);
-        items = years.map((y) => ({ label: y, value: y }));
-        onClick = (item) => handleItemClick(item.value);
-      } else if (dateNav.level === "month") {
-        backButton = (
-          <button
-            onClick={handleBack}
-            className="mb-2 text-sm text-blue-600 hover:underline"
-          >
-            &larr; Back to Years
-          </button>
-        );
-        // Extract months for selected year
-        const months = [
-          ...new Set(
-            availableDates
-              .filter((d) => parseLocalDate(d).getFullYear() === dateNav.year)
-              .map((d) => parseLocalDate(d).getMonth())
-          ),
-        ].sort((a, b) => b - a);
-
-        const monthNames = [
-          "January",
-          "February",
-          "March",
-          "April",
-          "May",
-          "June",
-          "July",
-          "August",
-          "September",
-          "October",
-          "November",
-          "December",
-        ];
-        items = months.map((m) => ({ label: monthNames[m], value: m }));
-        onClick = (item) => handleItemClick(item.value);
-      } else if (dateNav.level === "week") {
-        backButton = (
-          <button
-            onClick={handleBack}
-            className="mb-2 text-sm text-blue-600 hover:underline"
-          >
-            &larr; Back to Months
-          </button>
-        );
-        // Extract weeks for selected month
-        // We'll group by week start (Sunday)
-        const datesInMonth = availableDates
-          .filter((d) => {
-            const date = parseLocalDate(d);
-            return (
-              date.getFullYear() === dateNav.year &&
-              date.getMonth() === dateNav.month
-            );
-          })
-          .sort();
-
-        const weeks = new Set();
-        datesInMonth.forEach((d) => {
-          const date = parseLocalDate(d);
-          const start = getStartOfWeek(date);
-          weeks.add(start.toISOString());
-        });
-
-        items = [...weeks]
-          .sort()
-          .reverse()
-          .map((w) => {
-            const start = new Date(w);
-            const end = new Date(start);
-            end.setDate(end.getDate() + 6);
-            return {
-              label: `${start.toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              })} - ${end.toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              })}`,
-              value: w,
-            };
-          });
-        onClick = (item) => handleItemClick(item.value);
-      } else if (dateNav.level === "day") {
-        backButton = (
-          <button
-            onClick={handleBack}
-            className="mb-2 text-sm text-blue-600 hover:underline"
-          >
-            &larr; Back to Weeks
-          </button>
-        );
-        // Extract days for selected week
-        const weekStart = new Date(dateNav.weekStart);
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 6);
-        weekEnd.setHours(23, 59, 59, 999);
-
-        const days = availableDates
-          .filter((d) => {
-            const date = parseLocalDate(d);
-            return date >= weekStart && date <= weekEnd;
-          })
-          .sort()
-          .reverse();
-
-        items = days.map((d) => {
-          const date = parseLocalDate(d);
-          return {
-            label: date.toLocaleDateString(undefined, {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-            }),
-            value: d,
-          };
-        });
-        onClick = (item) => handleItemClick(item.value);
-      }
-
+    if (timeRange === "year") {
+      const months = getMonthsInYear(currentYear);
       return (
-        <div>
-          {backButton}
-          <ul>
-            {items.map((item, index) => (
+        <ul>
+          {months.map((date, index) => (
+            <li
+              key={index}
+              onClick={() => {
+                setCurrentPeriodStart(date);
+                setTimeRange("month");
+              }}
+              className="p-2 font-semibold cursor-pointer hover:bg-gray-100 border-b"
+            >
+              {date.toLocaleDateString(undefined, {
+                month: "long",
+              })}
+            </li>
+          ))}
+        </ul>
+      );
+    } else if (timeRange === "month") {
+      const weeks = getWeeksInMonth(currentYear, currentMonth);
+      return (
+        <ul>
+          <li
+            className="p-2 cursor-pointer hover:bg-gray-100 border-b font-bold text-gray-500 flex items-center gap-2"
+            onClick={() => setTimeRange("year")}
+          >
+            <span>&larr;</span> Back to Year
+          </li>
+          {weeks.map((week, index) => {
+            return (
               <li
                 key={index}
-                onClick={() => onClick(item)}
-                className={`p-2 cursor-pointer hover:bg-gray-100 ${
-                  dateNav.level === "day" && selectedItem === item.value
-                    ? "bg-blue-50"
-                    : ""
+                onClick={() => {
+                  setCurrentPeriodStart(week.start);
+                  setTimeRange("week");
+                }}
+                className="p-2 cursor-pointer hover:bg-gray-100 border-b"
+              >
+                <div className="font-semibold">
+                  Week {getWeekNumber(week.start)}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {week.start.toLocaleDateString()} -{" "}
+                  {week.end.toLocaleDateString()}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      );
+    } else if (timeRange === "week") {
+      const days = getDaysInWeek(currentPeriodStart);
+      return (
+        <ul>
+          <li
+            className="p-2 cursor-pointer hover:bg-gray-100 border-b font-bold text-gray-500 flex items-center gap-2"
+            onClick={() => setTimeRange("month")}
+          >
+            <span>&larr;</span> Back to Month
+          </li>
+          {days.map((date, index) => (
+            <li
+              key={index}
+              onClick={() => {
+                setCurrentPeriodStart(date);
+                setTimeRange("day");
+              }}
+              className="p-2 cursor-pointer hover:bg-gray-100 border-b"
+            >
+              <div className="font-semibold">
+                {date.toLocaleDateString(undefined, { weekday: "long" })}
+              </div>
+
+              <div className="text-xs text-gray-500">
+                {date.toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </div>
+            </li>
+          ))}
+        </ul>
+      );
+    } else if (timeRange === "day") {
+      const startOfWeek = getStartOfWeek(currentPeriodStart);
+      const days = getDaysInWeek(startOfWeek);
+
+      return (
+        <ul>
+          <li
+            className="p-2 cursor-pointer hover:bg-gray-100 border-b font-bold text-gray-500 flex items-center gap-2"
+            onClick={() => {
+              setCurrentPeriodStart(startOfWeek);
+              setTimeRange("week");
+            }}
+          >
+            <span>&larr;</span> Back to Week
+          </li>
+          {days.map((date, index) => {
+            const isSelected =
+              date.toDateString() === currentPeriodStart.toDateString();
+            return (
+              <li
+                key={index}
+                onClick={() => setCurrentPeriodStart(date)}
+                className={`p-2 cursor-pointer hover:bg-gray-100 border-b ${
+                  isSelected ? "bg-blue-50 border-l-4 border-l-blue-500" : ""
                 }`}
               >
-                <div className="font-semibold">{item.label}</div>
+                <div className="font-semibold">
+                  {date.toLocaleDateString(undefined, { weekday: "long" })}
+                </div>
+
+                <div className="text-xs text-gray-500">
+                  {date.toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </div>
               </li>
-            ))}
-          </ul>
-        </div>
+            );
+          })}
+        </ul>
       );
     }
-
-    return (
-      <ul>
-        {listData.map((item, index) => {
-          // Safety check for data type mismatch during view transition
-          if (
-            (viewMode === "drivers" || viewMode === "rescues") &&
-            typeof item !== "object"
-          )
-            return null;
-          if (
-            viewMode !== "drivers" &&
-            viewMode !== "rescues" &&
-            typeof item === "object"
-          )
-            return null;
-
-          // Ensure key is a string or number, not an object
-          const key =
-            viewMode === "drivers" || viewMode === "rescues"
-              ? item.transporterId
-              : item;
-
-          // Ensure label is a string
-          const label =
-            viewMode === "drivers" || viewMode === "rescues"
-              ? item.driverName
-              : item;
-
-          const subLabel =
-            viewMode === "drivers" || viewMode === "rescues"
-              ? item.transporterId
-              : "";
-
-          const isSelected =
-            viewMode === "drivers" || viewMode === "rescues"
-              ? selectedItem?.transporterId === item.transporterId
-              : selectedItem === item;
-
-          return (
-            <li
-              key={String(key || index)}
-              onClick={() => handleItemClick(item)}
-              className={`p-2 cursor-pointer hover:bg-gray-100 ${
-                isSelected ? "bg-blue-50" : ""
-              }`}
-            >
-              <div className="font-semibold">{String(label)}</div>
-              {subLabel && (
-                <div className="text-sm text-gray-500">{subLabel}</div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    );
+    // Fallback
+    return null;
   };
 
   const renderTableHeaders = () => {
@@ -1032,33 +1493,14 @@ const History = () => {
         </tr>
       );
     } else if (viewMode === "dates") {
-      if (dateNav.level !== "day" || !selectedItem) {
-        // Summary View Headers
-        return (
-          <tr>
-            <th className="px-4 py-2">Driver</th>
-            <th className="px-4 py-2">Total Stops</th>
-            <th className="px-4 py-2">Total Packages</th>
-            <th className="px-4 py-2">Avg Pace</th>
-            <th className="px-4 py-2">Target (Net)</th>
-          </tr>
-        );
-      }
-      // Detail View Headers
+      // Summary View Headers
       return (
         <tr>
           <th className="px-4 py-2">Driver</th>
-          <th className="px-4 py-2">Route</th>
-          <th className="px-4 py-2">Van</th>
-          <th className="px-4 py-2">Equipment</th>
-          <th className="px-4 py-2">Stops</th>
-          <th className="px-4 py-2">Packages</th>
-          <th className="px-4 py-2">Pace</th>
-          <th className="px-4 py-2">Break Time</th>
-          <th className="px-4 py-2">Last Stop</th>
-          <th className="px-4 py-2">Sign Out</th>
-          <th className="px-4 py-2">Target</th>
-          <th className="px-4 py-2">Note</th>
+          <th className="px-4 py-2">Total Stops</th>
+          <th className="px-4 py-2">Total Packages</th>
+          <th className="px-4 py-2">Avg Pace</th>
+          <th className="px-4 py-2">Target (Net)</th>
         </tr>
       );
     }
@@ -1066,6 +1508,13 @@ const History = () => {
 
   const getFilteredHistory = () => {
     return history.filter((record) => {
+      if (
+        selectedDriverFilter &&
+        record.transporterId !== selectedDriverFilter.transporterId
+      ) {
+        return false;
+      }
+
       if (viewMode === "dates") return true;
       if (timeRange === "all") return true;
       if (!currentPeriodStart) return true;
@@ -1083,16 +1532,23 @@ const History = () => {
         monthEnd.setDate(0);
         monthEnd.setHours(23, 59, 59, 999);
         return recordDate >= currentPeriodStart && recordDate <= monthEnd;
+      } else if (timeRange === "year") {
+        const yearEnd = new Date(currentPeriodStart);
+        yearEnd.setFullYear(yearEnd.getFullYear() + 1);
+        yearEnd.setDate(0);
+        yearEnd.setHours(23, 59, 59, 999);
+        return recordDate >= currentPeriodStart && recordDate <= yearEnd;
+      } else if (timeRange === "day") {
+        const dayEnd = new Date(currentPeriodStart);
+        dayEnd.setHours(23, 59, 59, 999);
+        return recordDate >= currentPeriodStart && recordDate <= dayEnd;
       }
       return true;
     });
   };
 
   const renderTableRows = () => {
-    if (
-      (viewMode === "dates" || viewMode === "rescues") &&
-      (dateNav.level !== "day" || !selectedItem)
-    ) {
+    if (viewMode === "dates" || viewMode === "rescues") {
       // Render Summary Rows
       if (summaryData.length === 0) {
         return (
@@ -1104,7 +1560,24 @@ const History = () => {
         );
       }
 
-      return summaryData.map((driver, index) => {
+      // Filter by selected driver if set
+      const dataToRender = selectedDriverFilter
+        ? summaryData.filter(
+            (d) => d.transporterId === selectedDriverFilter.transporterId
+          )
+        : summaryData;
+
+      if (dataToRender.length === 0) {
+        return (
+          <tr>
+            <td colSpan="5" className="px-4 py-2 text-center text-gray-500">
+              No data available for this driver in this period.
+            </td>
+          </tr>
+        );
+      }
+
+      return dataToRender.map((driver, index) => {
         if (viewMode === "rescues") {
           // Only show if there is rescue activity
           if (!driver.totalRescueStops && !driver.totalRescuedStops)
@@ -1118,7 +1591,14 @@ const History = () => {
 
           return (
             <tr key={index} className="border-b">
-              <td className="px-4 py-2 font-medium">{driver.driverName}</td>
+              <td className="px-4 py-2 font-medium">
+                <button
+                  onClick={() => setSelectedDriverFilter(driver)}
+                  className="text-blue-600 hover:underline text-left"
+                >
+                  {driver.driverName}
+                </button>
+              </td>
               <td className={`px-4 py-2 font-bold ${netColor}`}>
                 {netRescueDisplay}
               </td>
@@ -1135,7 +1615,14 @@ const History = () => {
 
         return (
           <tr key={index} className="border-b">
-            <td className="px-4 py-2 font-medium">{driver.driverName}</td>
+            <td className="px-4 py-2 font-medium">
+              <button
+                onClick={() => setSelectedDriverFilter(driver)}
+                className="text-blue-600 hover:underline text-left"
+              >
+                {driver.driverName}
+              </button>
+            </td>
             <td className="px-4 py-2">{driver.totalStops}</td>
             <td className="px-4 py-2">{driver.totalPackages}</td>
             <td className="px-4 py-2">{driver.avgPace.toFixed(2)}</td>
@@ -1153,6 +1640,7 @@ const History = () => {
     }
 
     const filteredHistory = getFilteredHistory();
+    // ... rest of renderTableRows
 
     if (filteredHistory.length === 0) {
       return (
@@ -1304,33 +1792,10 @@ const History = () => {
 
   const getTitle = () => {
     if (viewMode === "dates" || viewMode === "rescues") {
-      if (dateNav.level === "year") return "Select a Year";
-      if (dateNav.level === "month") return `Summary for ${dateNav.year}`;
-      if (dateNav.level === "week") {
-        const monthNames = [
-          "January",
-          "February",
-          "March",
-          "April",
-          "May",
-          "June",
-          "July",
-          "August",
-          "September",
-          "October",
-          "November",
-          "December",
-        ];
-        return `Summary for ${monthNames[dateNav.month]} ${dateNav.year}`;
+      if (selectedDriverFilter) {
+        return `Metric Summary for ${selectedDriverFilter.driverName}`;
       }
-      if (dateNav.level === "day") {
-        const start = new Date(dateNav.weekStart);
-        const end = new Date(start);
-        end.setDate(end.getDate() + 6);
-        return `Summary for Week of ${start.toLocaleDateString()}`;
-      }
-      // Detail view (when a day is selected, but logic handles it in handleItemClick setting selectedItem)
-      if (selectedItem) return `Metrics for ${selectedItem}`;
+      return "Metric Summary";
     }
 
     if (!selectedItem) return "Select an item to view history";
@@ -1347,6 +1812,10 @@ const History = () => {
       newDate.setDate(newDate.getDate() - 7);
     } else if (timeRange === "month") {
       newDate.setMonth(newDate.getMonth() - 1);
+    } else if (timeRange === "year") {
+      newDate.setFullYear(newDate.getFullYear() - 1);
+    } else if (timeRange === "day") {
+      newDate.setDate(newDate.getDate() - 1);
     }
     setCurrentPeriodStart(newDate);
   };
@@ -1358,6 +1827,10 @@ const History = () => {
       newDate.setDate(newDate.getDate() + 7);
     } else if (timeRange === "month") {
       newDate.setMonth(newDate.getMonth() + 1);
+    } else if (timeRange === "year") {
+      newDate.setFullYear(newDate.getFullYear() + 1);
+    } else if (timeRange === "day") {
+      newDate.setDate(newDate.getDate() + 1);
     }
     setCurrentPeriodStart(newDate);
   };
@@ -1437,6 +1910,13 @@ const History = () => {
     } else {
       if (!selectedItem) return null;
       dataToSummarize = getFilteredHistory();
+    }
+
+    // Apply driver filter
+    if (selectedDriverFilter && isAggregated) {
+      dataToSummarize = dataToSummarize.filter(
+        (d) => d.transporterId === selectedDriverFilter.transporterId
+      );
     }
 
     if (dataToSummarize.length === 0) return null;
@@ -1563,105 +2043,130 @@ const History = () => {
     );
   };
 
-  return (
-    <div className="p-4 flex gap-4">
-      <div className="w-1/4 bg-white p-4 rounded shadow">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold">
-            {viewMode === "drivers"
-              ? "Drivers"
-              : viewMode === "routes"
-              ? "Routes"
-              : "Dates"}
-          </h2>
-          <select
-            value={viewMode}
-            onChange={(e) => setViewMode(e.target.value)}
-            className="border p-1 rounded"
+  const leftPanelContent = (
+    <>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">
+          {timeRange === "year" && currentPeriodStart?.getFullYear()}
+          {timeRange === "month" &&
+            currentPeriodStart?.toLocaleDateString(undefined, {
+              month: "long",
+              year: "numeric",
+            })}
+          {timeRange === "week" &&
+            currentPeriodStart &&
+            `Week ${getWeekNumber(currentPeriodStart)}`}
+          {timeRange === "day" &&
+            currentPeriodStart?.toLocaleDateString(undefined, {
+              month: "long",
+              day: "numeric",
+            })}
+          {!currentPeriodStart && "Navigation"}
+        </h2>
+      </div>
+      <div className="max-h-[calc(100vh-200px)] overflow-y-auto">
+        {renderList()}
+      </div>
+    </>
+  );
+
+  const summaryContent = (
+    <>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">{getTitle()}</h2>
+        {selectedDriverFilter && (
+          <button
+            onClick={() => setSelectedDriverFilter(null)}
+            className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded"
           >
-            <option value="drivers">Drivers</option>
-            <option value="routes">Route Code</option>
-            <option value="dates">Date</option>
-            <option value="rescues">Rescues</option>
-          </select>
-        </div>
-        <div className="max-h-[calc(100vh-200px)] overflow-y-auto">
-          {renderList()}
-        </div>
+            View all drivers
+          </button>
+        )}
       </div>
 
-      <div className="w-3/4 bg-white p-4 rounded shadow">
-        <h2 className="text-xl font-bold mb-4">{getTitle()}</h2>
+      {(selectedItem || viewMode === "dates" || viewMode === "rescues") && (
+        <CalendarNavigation
+          viewMode={timeRange === "all" ? "year" : timeRange}
+          currentDate={currentPeriodStart || new Date()}
+          onDateSelect={(date, mode) => {
+            setCurrentPeriodStart(date);
+            setTimeRange(mode);
+          }}
+          onViewChange={(mode) => setTimeRange(mode)}
+          onNavigate={(direction) => {
+            if (direction === -1) handlePrevPeriod();
+            else handleNextPeriod();
+          }}
+          data={getFilteredHistory()}
+          targetClockOutTime={targetClockOutTime}
+        />
+      )}
 
-        {selectedItem && viewMode !== "dates" && viewMode !== "rescues" && (
-          <div className="mb-4">
-            <div className="flex gap-2 mb-2">
-              {["week", "month", "all"].map((range) => (
-                <button
-                  key={range}
-                  onClick={() => setTimeRange(range)}
-                  className={`px-3 py-1 rounded text-sm font-medium border ${
-                    timeRange === range
-                      ? "bg-blue-500 text-white border-blue-500"
-                      : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                  }`}
-                >
-                  {range.charAt(0).toUpperCase() + range.slice(1)}
-                </button>
-              ))}
-            </div>
+      {renderSummary()}
+    </>
+  );
 
-            {timeRange !== "all" && currentPeriodStart && (
-              <div className="flex justify-between items-center bg-gray-50 p-2 rounded">
-                <button
-                  onClick={handlePrevPeriod}
-                  className="bg-white border px-3 py-1 rounded hover:bg-gray-100 text-sm font-medium"
-                >
-                  &larr; Previous
-                </button>
-                <span className="font-semibold text-gray-700">
-                  {timeRange === "week" &&
-                    currentPeriodStart &&
-                    `${currentPeriodStart.toLocaleDateString()} - ${new Date(
-                      new Date(currentPeriodStart).setDate(
-                        currentPeriodStart.getDate() + 6
-                      )
-                    ).toLocaleDateString()}`}
-                  {timeRange === "month" &&
-                    currentPeriodStart &&
-                    currentPeriodStart.toLocaleDateString(undefined, {
-                      month: "long",
-                      year: "numeric",
-                    })}
-                </span>
-                <button
-                  onClick={handleNextPeriod}
-                  className="bg-white border px-3 py-1 rounded hover:bg-gray-100 text-sm font-medium"
-                >
-                  Next &rarr;
-                </button>
-              </div>
-            )}
+  const rightPanelContent = (
+    <>
+      <div className="flex gap-4 mb-4 border-b items-center">
+        <button
+          className={`py-2 px-4 font-medium ${
+            activeTab === "table"
+              ? "text-blue-600 border-b-2 border-blue-600"
+              : "text-gray-500 hover:text-gray-700"
+          }`}
+          onClick={() => setActiveTab("table")}
+        >
+          Table
+        </button>
+        <button
+          className={`py-2 px-4 font-medium ${
+            activeTab === "graph"
+              ? "text-blue-600 border-b-2 border-blue-600"
+              : "text-gray-500 hover:text-gray-700"
+          }`}
+          onClick={() => setActiveTab("graph")}
+        >
+          Graph
+        </button>
+        {selectedDriverFilter && (
+          <div className="ml-auto py-2 px-4 font-medium">
+            <button
+              onClick={() => setSelectedDriverFilter(null)}
+              className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded"
+            >
+              View all drivers
+            </button>
+          </div>
+        )}
+      </div>
+
+      {activeTab === "graph" &&
+        selectedItem &&
+        (viewMode === "drivers" || viewMode === "routes") &&
+        (timeRange === "week" ||
+          timeRange === "month" ||
+          timeRange === "year" ||
+          timeRange === "day") && (
+          <MetricsGraph
+            data={getFilteredHistory()}
+            viewMode={viewMode}
+            timeRange={timeRange}
+            periodStart={currentPeriodStart}
+            targetClockOutTime={targetClockOutTime}
+          />
+        )}
+
+      {activeTab === "graph" &&
+        (viewMode === "dates" || viewMode === "rescues") && (
+          <div className="p-8 text-center text-gray-500">
+            Graph view is not available for summary views. Please select a
+            driver from the list to view their detailed graph.
           </div>
         )}
 
-        {renderSummary()}
-
-        {selectedItem &&
-          (viewMode === "drivers" || viewMode === "routes") &&
-          (timeRange === "week" || timeRange === "month") && (
-            <MetricsGraph
-              data={getFilteredHistory()}
-              viewMode={viewMode}
-              timeRange={timeRange}
-              periodStart={currentPeriodStart}
-              targetClockOutTime={targetClockOutTime}
-            />
-          )}
-
-        {(selectedItem ||
-          ((viewMode === "dates" || viewMode === "rescues") &&
-            dateNav.level !== "year")) && (
+      {activeTab === "table" &&
+        (selectedItem || viewMode === "dates" || viewMode === "rescues") && (
           <div className="overflow-x-auto">
             <table className="min-w-full table-auto">
               <thead className="bg-gray-200">{renderTableHeaders()}</thead>
@@ -1669,7 +2174,19 @@ const History = () => {
             </table>
           </div>
         )}
-      </div>
+    </>
+  );
+
+  return (
+    <div className="p-4">
+      <DetailedView
+        summary={summaryContent}
+        leftPanel={leftPanelContent}
+        rightPanel={rightPanelContent}
+        gridClass="grid-cols-1 lg:grid-cols-4"
+        leftPanelClass="lg:col-span-1"
+        rightPanelClass="lg:col-span-3"
+      />
     </div>
   );
 };

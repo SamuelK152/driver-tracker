@@ -26,7 +26,9 @@ router.get('/list', asyncHandler(async (req, res) => {
         {
             $group: {
                 _id: "$transporterId",
-                lastDate: { $max: "$date" }
+                lastDate: { $max: "$date" },
+                totalStops: { $sum: "$stopsComplete" },
+                totalPackages: { $sum: "$totalPackages" }
             }
         }
     ]);
@@ -39,7 +41,9 @@ router.get('/list', asyncHandler(async (req, res) => {
     const result = drivers.map(d => ({
         transporterId: d._id,
         driverName: empMap.get(d._id) || d._id,
-        lastDate: d.lastDate
+        lastDate: d.lastDate,
+        totalStops: d.totalStops,
+        totalPackages: d.totalPackages
     }));
 
     res.json(result);
@@ -402,6 +406,25 @@ router.post('/rescue', asyncHandler(async (req, res) => {
     await Promise.all([rescuerMetric.save(), rescueeMetric.save()]);
 
     res.json({ message: 'Rescue recorded successfully' });
+}));
+
+// Get history for a specific item (driver, route, etc.)
+router.get('/history', asyncHandler(async (req, res) => {
+    const { viewMode, item, startDate, endDate } = req.query;
+
+    let query = {};
+    if (startDate && endDate) {
+        query.date = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+
+    if (viewMode === 'drivers') {
+        query.transporterId = item;
+    } else if (viewMode === 'routes') {
+        query.routeCode = item;
+    }
+
+    const metrics = await RouteMetric.find(query).sort({ date: 1 });
+    res.json(metrics);
 }));
 
 module.exports = router;
